@@ -228,7 +228,7 @@ def _crossings_with(peds: pd.DataFrame, cols: list[str]) -> int:
     return int((peds[cols].fillna(0).sum(axis=1) > 0).sum())
 
 
-def _yield_markdown(y: dict) -> list[str]:
+def _yield_markdown(y: dict, limit: float) -> list[str]:
     L = ["## Drivers yielding to pedestrians\n"]
     if not y["crossings"]:
         return L + ["No pedestrian crossings were recorded.\n"]
@@ -258,7 +258,7 @@ def _yield_markdown(y: dict) -> list[str]:
              "either end of the crosswalk until they finish crossing. A driver **did not yield** if they "
              "reached the crosswalk in that window, in a lane the pedestrian still had to cross, without "
              "slowing below 5 mph, and at least 3 seconds after the pedestrian appeared (enough time to "
-             "react and stop at 25 mph). Only the first driver per direction who stops counts as "
+             f"react and stop at {limit:g} mph). Only the first driver per direction who stops counts as "
              "yielding, so a queue behind them doesn't inflate the rate. California Vehicle Code 21950 "
              "requires drivers to yield to pedestrians crossing within a marked crosswalk. For context, "
              "FHWA reports yield rates with RRFBs from 19% to as high as 98%.\n")
@@ -491,7 +491,7 @@ def _markdown(s: dict, directions: list[str]) -> str:
              f"{g['random_traffic_avg_wait_s']} s.\n")
 
     if s.get("yielding"):
-        L.extend(_yield_markdown(s["yielding"]))
+        L.extend(_yield_markdown(s["yielding"], s["speed"]["limit_mph"]))
     L.extend(_benchmark_markdown(s))
     L.append("## Method and calibration\n")
     L.append(f"- Detection: {s['processing']['model']} (YOLO) on every {s['processing']['stride']} "

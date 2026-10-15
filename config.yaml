@@ -1,6 +1,6 @@
 # Traffic study settings. Scene geometry (lines, polygons) lives in calibration.yaml.
 
-speed_limit_mph: 25
+speed_limit_mph: 30   # posted limit on the main street
 timezone: America/Los_Angeles
 
 # Direction label for a vehicle crossing the count line, by on-screen motion.
