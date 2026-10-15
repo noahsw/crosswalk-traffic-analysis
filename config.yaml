@@ -1,0 +1,79 @@
+# Traffic study settings. Scene geometry (lines, polygons) lives in calibration.yaml.
+
+speed_limit_mph: 25
+timezone: America/Los_Angeles
+
+# Direction label for a vehicle crossing the count line, by on-screen motion.
+# The camera is on the north side facing southeast; the near lane is westbound and
+# moves left-to-right on screen.
+direction_labels:
+  left_to_right: westbound
+  right_to_left: eastbound
+
+# Direction label for a pedestrian, by motion along the crosswalk
+# ("near" = the side of the first two crosswalk points in calibration.yaml).
+crosswalk_direction_labels:
+  near_to_far: southbound
+  far_to_near: northbound
+
+# Street details used for the benchmark comparisons in summary.md.
+road:
+  lanes: 2                        # through lanes the crosswalk crosses (for the FHWA table)
+  crosswalk_length_ft: 34         # curb to curb along the crosswalk
+  crosswalk_length_measured: true # measured on Google Maps, 2026-10-15
+  walking_speed_fps: 3.5          # HCM/MUTCD design walking speed
+  startup_seconds: 3.0            # time to look, step off the curb and clear the far lane
+  # Treatments from FHWA's STEP guide already at this crosswalk, by its numbering:
+  # 1 = high-visibility crosswalk and warning signs (pedestrian crossing signs both directions)
+  existing_treatments: [1]
+
+detection:
+  model: models/yolo11m.pt   # yolo11s.pt is ~2x faster, slightly less accurate
+  imgsz: 960                 # inference size in pixels
+  confidence: 0.25
+  device: auto               # auto | mps | cuda | cpu
+  stride: 2                  # detect on every Nth frame (2 = 15 detections/s at 30 fps)
+  vehicle_classes: [car, motorcycle, bus, truck]
+  bicycle_classes: [bicycle]
+  person_classes: [person]
+
+tracking:
+  lost_track_seconds: 1.5      # keep a track alive this long through occlusion
+  finalize_after_seconds: 3.0  # a track unseen this long is closed and written out
+  smoothing_samples: 5         # rolling median over this many positions
+
+speed:
+  min_points: 4    # need at least this many detections between the trap lines
+  min_mph: 3       # discard speeds outside these bounds as tracking errors
+  max_mph: 80
+
+pedestrians:
+  min_seconds_in_crosswalk: 0.5
+  min_crossing_fraction: 0.3        # must move at least 30% of the way across
+  max_containment_in_vehicle: 0.9   # ignore "people" inside a car's box (drivers)
+
+# Driver yielding to pedestrians (see traffic/yields.py for the exact rules).
+yielding:
+  enabled: true
+  # Which half of the crosswalk each direction's lane is on ("near" = camera side).
+  lanes:
+    westbound: near
+    eastbound: far
+  min_seconds_to_stop: 3.0   # arriving sooner than this after the pedestrian appears = "too close to stop"
+  stopped_mph: 5             # slowing below this before the crosswalk counts as yielding
+  waiting_area_px: 90        # how far beyond each end of the crosswalk counts as waiting at the curb
+  clip_seconds_before: 6     # each clip starts this long before the vehicle reaches the crosswalk
+  clip_seconds_after: 3
+  max_clips: 60
+
+output:
+  video: true
+  height: null        # null = same as input; set 720 to downscale
+  bitrate: 6M
+  overlays:
+    zones: true       # count line, speed trap, crosswalk
+    gates: true       # entry/exit gates
+    timestamp: true
+    counters: true
+    trails: false     # draw each vehicle's recent path
+  movement_check_samples: 3   # sample images per movement type in out/movement_check/

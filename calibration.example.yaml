@@ -1,0 +1,61 @@
+# Example calibration. Copy it to calibration.yaml (which is gitignored) and redraw every
+# shape for your own camera with: uv run python calibrate.py <video>
+site_name: Main St & Side St
+notes: >-
+  Example scene: camera on the north side of a two-lane east-west main street, facing
+  southeast. On screen, right is west and left is east; a side street is the lower-left
+  corner (north side) and a gated entrance is across the street (south side).
+image_size: [1920, 1080]
+reference_frame_seconds: 60
+# Vehicles crossing this line are counted. It sits on the west leg, just west of the
+# crosswalk, so every vehicle that drives through the crosswalk crosses it.
+count_line:
+- [1150, 573]
+- [560, 708]
+# Which intersection leg the count line sits on (used to infer movement when a
+# track was only seen at one gate).
+count_line_leg: west
+# Speed trap: time between crossing line_a and line_b. Each line starts at one end
+# of the red curb on the far (south) side (east end for A, west end for B), so
+# distance_ft is the red curb length.
+speed_trap:
+  line_a:
+  - [1200, 578]
+  - [700, 696]
+  line_b:
+  - [1758, 694]
+  - [1250, 945]
+  distance_ft: 25.92
+  distance_measured: true
+  distance_notes: Red curb on the south sidewalk, tape-measured.
+# Entry/exit gates, one per intersection leg, named by compass direction.
+gates:
+  # Main street toward the east (upper left of the frame).
+  east:
+  - [245, 375]
+  - [215, 550]
+  # Main street toward the west (lower right).
+  west:
+  - [1700, 690]
+  - [1665, 1075]
+  # Gated entrance across the street, including its exit lane west of the island.
+  south:
+  - [520, 415]
+  - [1010, 515]
+  # Side street, lower left of the frame, on the camera's side.
+  north:
+  - [205, 562]
+  - [205, 690]
+# Plain-English names for the gates, used in the report.
+gate_labels:
+  east: Main St (east)
+  west: Main St (west)
+  south: Gated entrance (south side)
+  north: Side St
+# Crosswalk polygon: the two near-side (north, camera side) corners first, then the
+# two far-side (south) corners.
+crosswalk:
+- [400, 612]
+- [575, 645]
+- [990, 560]
+- [815, 525]
