@@ -27,6 +27,15 @@ road:
   # 1 = high-visibility crosswalk and warning signs (pedestrian crossing signs both directions)
   existing_treatments: [1]
 
+# How far back a driver on each approach can first see a pedestrian standing at the curb of
+# the crosswalk. The report compares it with AASHTO stopping sight distance (200 ft at 30 mph).
+# See the README for how to measure it.
+sight_distance:
+  westbound:
+    feet: null          # your measurement; null = not measured yet
+    grade_pct: 0        # approach grade: negative = downhill toward the crosswalk
+    notes: Hill crest about 50 ft east of the crosswalk; low sun ahead in the afternoon and evening.
+
 detection:
   model: models/yolo11m.pt   # yolo11s.pt is ~2x faster, slightly less accurate
   imgsz: 960                 # inference size in pixels

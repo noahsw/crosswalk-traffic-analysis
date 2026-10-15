@@ -4,6 +4,12 @@
 
 - [x] Tape-measure the red curb on the south sidewalk: 25 ft 11 in (2026-10-15).
 - [x] Measure the crosswalk length: 34 ft on Google Maps (2026-10-15).
+- [ ] Measure westbound sight distance over the hill crest (see README) and set
+      `sight_distance.westbound.feet` (and `grade_pct` if downhill) in `config.yaml`.
+- [ ] Photograph or film the sun glare from a westbound driver's eye height at the crest in the
+      late afternoon, with the date and time.
+- [ ] Check which signs westbound drivers see before the crest (for example a pedestrian
+      crossing sign with an AHEAD plaque).
 - [ ] Do a 10-minute manual count and run `validate.py --count-window ... --manual-count ...`.
 - [ ] Optional: drive past at a fixed speed (cruise control), 3+ passes each direction, log times,
       and run `validate.py --speeds`.

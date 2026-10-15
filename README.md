@@ -173,6 +173,22 @@ re-processing the video (it reuses the tracks saved in `tracks.pkl`):
 uv run python yielding.py out/VIDEO
 ```
 
+**Sight distance** (`sight_distance` in `config.yaml`): how far back a driver on an approach
+can first see a pedestrian at the crosswalk. The report compares it with the AASHTO stopping
+sight distance (200 ft at 30 mph, more on a downhill approach) and notes FHWA's provision for
+an additional RRFB in advance of the crosswalk where sight distance is short. To measure it:
+
+1. One person stands at the curb at the crosswalk.
+2. Another walks back along the sidewalk on that approach, with their eyes about 3.5 ft above
+   the road (a driver's eye height, roughly crouching).
+3. Stop where you can no longer see the first person's knees. AASHTO assumes a 2 ft high object.
+4. Measure the distance with a measuring wheel or Google Maps, and set `feet:`. If the approach
+   slopes down toward the crosswalk, set `grade_pct:` negative (for example -4 for a 4% downgrade).
+
+Then run `summarize.py` to update the report.
+
+Yield results are also broken down **by direction**, to compare the approaches.
+
 **pedestrians_reviewed.csv** and **ped_check/** cover everyone whose feet came near the
 crosswalk, counted or not, with the reason: `counted`, `near but never inside` (for example,
 walking along the sidewalk past the gated entrance), `riding a bike or motorcycle`, `did not

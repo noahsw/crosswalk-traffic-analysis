@@ -138,3 +138,20 @@ def gap_analysis(vehicle_seconds, window_seconds: float, critical_gap: float,
         "random_traffic_avg_wait_s": round(random_delay, 1),
         "_delays": d, "_arrivals": arrivals[ok],
     }
+
+
+def stopping_sight_distance_ft(mph: float, grade_pct: float = 0.0, reaction_s: float = 2.5,
+                               decel_fps2: float = 11.2) -> float:
+    """AASHTO Green Book stopping sight distance (feet).
+
+    Brake reaction distance plus braking distance. grade_pct is positive uphill and
+    negative downhill (a downhill approach needs more distance).
+    """
+    reaction = 1.47 * mph * reaction_s
+    braking = mph ** 2 / (30 * (decel_fps2 / 32.2 + grade_pct / 100))
+    return reaction + braking
+
+
+def design_stopping_sight_distance_ft(mph: float, grade_pct: float = 0.0) -> int:
+    """Rounded up to the next 5 ft, as in the Green Book tables."""
+    return int(math.ceil(stopping_sight_distance_ft(mph, grade_pct) / 5) * 5)

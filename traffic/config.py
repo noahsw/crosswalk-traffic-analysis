@@ -41,6 +41,7 @@ DEFAULTS = {
         "min_crossing_fraction": 0.3,
         "max_containment_in_vehicle": 0.9,
     },
+    "sight_distance": {},
     "yielding": {
         "enabled": True,
         "lanes": {},

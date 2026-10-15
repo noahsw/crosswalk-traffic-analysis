@@ -219,6 +219,11 @@ def _yield_summary(out_dir: Path, crossings: int) -> dict | None:
         "max_wait_at_curb_s": round(float(waits.max()), 1) if len(waits) else None,
         "clips": int((missed["clip"] != "").sum()) if len(missed) else 0,
         "note_groups": bool(len(ev)) and ev["pedestrian"].astype(str).str.contains("\\+").any(),
+        "by_direction": {
+            d: {"yielded": int((g["outcome"] == "yielded").sum()),
+                "did_not_yield": int((g["outcome"] == "did_not_yield").sum()),
+                "too_close_to_stop": int((g["outcome"] == "too_close_to_stop").sum())}
+            for d, g in ev.groupby("vehicle_direction")} if len(ev) else {},
     }
 
 
@@ -250,6 +255,14 @@ def _yield_markdown(y: dict, limit: float) -> list[str]:
     if y["avg_wait_at_curb_s"] is not None:
         L.append(f"- Pedestrians waited at the curb {y['avg_wait_at_curb_s']} s on average before stepping "
                  f"out (longest {y['max_wait_at_curb_s']} s).")
+    if y.get("by_direction"):
+        L.append("\n| Drivers by direction | Yielded | Did not yield | Too close to stop | Yield rate |")
+        L.append("|---|---|---|---|---|")
+        for d, r in y["by_direction"].items():
+            n = r["yielded"] + r["did_not_yield"]
+            rate = f"{100 * r['yielded'] / n:.0f}%" if n else "n/a"
+            L.append(f"| {d.capitalize()} | {r['yielded']} | {r['did_not_yield']} | {r['too_close_to_stop']} | {rate} |")
+        L.append("")
     if y["clips"]:
         L.append(f"- Video clip of each driver not yielding: `yield_clips/` ({y['clips']} clips, also joined "
                  "in `yield_clips/all_did_not_yield.mp4`). Each one should be watched before it's shared.")
@@ -311,6 +324,25 @@ def _benchmarks(s: dict, cfg: dict) -> dict:
         out["risk"]["at_p85"] = {"mph": p85,
                                  "death_pct": round(bm.risk_at(p85, bm.DEATH_RISK_MPH)),
                                  "severe_pct": round(bm.risk_at(p85, bm.SEVERE_INJURY_RISK_MPH))}
+
+    by_dir = s["speed"].get("by_direction") or {}
+    out["sight_distance"] = []
+    for direction, conf in (cfg.get("sight_distance") or {}).items():
+        conf = conf or {}
+        grade = float(conf.get("grade_pct") or 0)
+        feet = conf.get("feet")
+        p85_dir = (by_dir.get(direction) or {}).get("p85_mph")
+        needed = bm.design_stopping_sight_distance_ft(limit, grade)
+        out["sight_distance"].append({
+            "direction": direction,
+            "feet": float(feet) if feet is not None else None,
+            "grade_pct": grade,
+            "notes": conf.get("notes") or "",
+            "needed_at_limit_ft": needed,
+            "p85_mph": p85_dir,
+            "needed_at_p85_ft": bm.design_stopping_sight_distance_ft(p85_dir, grade) if p85_dir else None,
+            "shortfall_ft": (max(0, needed - float(feet)) if feet is not None else None),
+        })
     return out
 
 
@@ -533,6 +565,46 @@ def _markdown(s: dict, directions: list[str]) -> str:
 SPEED_BAND_NAMES = {"<=30": "30 mph or less", "35": "35 mph", ">=40": "40 mph or more"}
 
 
+def _sight_distance_markdown(rows: list[dict], lim: float) -> list[str]:
+    if not rows:
+        return []
+    L = ["### Sight distance on the approaches\n",
+         "How far back a driver can first see a pedestrian at the crosswalk, compared with the AASHTO "
+         "stopping sight distance: the distance a driver needs to notice a hazard (2.5 seconds) and "
+         "brake to a stop.\n",
+         f"| Approach | Can first see a pedestrian | Needed at the {lim:g} mph limit | "
+         "Needed at the measured 85th-percentile speed | Shortfall |",
+         "|---|---|---|---|---|"]
+    for r in rows:
+        seen = f"{r['feet']:g} ft" if r["feet"] is not None else "**not yet measured**"
+        p85 = (f"{r['needed_at_p85_ft']} ft ({r['p85_mph']} mph)" if r["needed_at_p85_ft"] else "n/a")
+        if r["shortfall_ft"] is None:
+            short = "n/a"
+        else:
+            short = f"**{r['shortfall_ft']:g} ft short**" if r["shortfall_ft"] > 0 else "none"
+        grade = f", {abs(r['grade_pct']):g}% {'downhill' if r['grade_pct'] < 0 else 'uphill'}" if r["grade_pct"] else ""
+        L.append(f"| {r['direction'].capitalize()}{grade} | {seen} | {r['needed_at_limit_ft']} ft | {p85} | {short} |")
+    L.append("")
+    for r in rows:
+        if r["notes"]:
+            L.append(f"- {r['direction'].capitalize()}: {r['notes']}")
+    if any(r["notes"] for r in rows):
+        L.append("")
+    if any(r["feet"] is None for r in rows):
+        L.append("To measure: one person stands at the curb at the crosswalk. Another walks back along "
+                 "the sidewalk on that approach with their eyes about 3.5 ft above the road (a driver's "
+                 "eye height, roughly crouching), until they can no longer see the first person's knees "
+                 "(AASHTO assumes a 2 ft high object). The distance between them, by measuring wheel or "
+                 "Google Maps, is the sight distance.\n")
+    L.append("Where sight distance is shorter than needed, FHWA's rules for RRFBs (Interim Approval "
+             "IA-21, condition 2d, now part of the 2023 MUTCD) allow an **additional RRFB on that approach "
+             "in advance of the crosswalk**, with a pedestrian crossing sign and an AHEAD or distance "
+             "plaque. FHWA's crosswalk guide (Table 2) lists RRFBs as addressing inadequate "
+             "conspicuity/visibility and drivers not yielding. The MUTCD's HILL BLOCKS VIEW sign (W7-6) "
+             "warns drivers approaching a crest with limited sight distance.\n")
+    return L
+
+
 def _benchmark_markdown(s: dict) -> list[str]:
     b, v, sp, g = s["benchmarks"], s["vehicles"], s["speed"], s["crossing_gaps"]
     names = bm.STEP_COUNTERMEASURES
@@ -584,12 +656,15 @@ def _benchmark_markdown(s: dict) -> list[str]:
              "pedestrians face much higher risk: a 70-year-old struck at 25 mph has about the same "
              "risk as a 30-year-old struck at 35 mph.\n")
 
+    L.extend(_sight_distance_markdown(b.get("sight_distance") or [], lim))
     L.append("### Crossing delay\n")
     L.append("The Highway Capacity Manual grades unsignalized crossings by average pedestrian wait: "
              "A under 5 s, B 5 to 10 s, C 10 to 20 s, D 20 to 30 s, E 30 to 45 s, F over 45 s. "
              f"This crossing measured **{_fmt(g['avg_wait_s'], ' s')} (grade {g['los']})**.\n")
 
-    L.append("Sources: FHWA, *Guide for Improving Pedestrian Safety at Uncontrolled Crossing "
+    L.append("Sources: AASHTO, *A Policy on Geometric Design of Highways and Streets* (the Green Book), "
+             "stopping sight distance. FHWA, MUTCD Interim Approval IA-21 for RRFBs (2018), now in the "
+             "2023 MUTCD. FHWA, *Guide for Improving Pedestrian Safety at Uncontrolled Crossing "
              "Locations* (2018), Table 1. FHWA, *Highway Functional Classification Concepts, "
              "Criteria and Procedures* (2023). Tefft, *Impact Speed and a Pedestrian's Risk of Severe "
              "Injury or Death*, AAA Foundation for Traffic Safety (2011). Transportation Research "
