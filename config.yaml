@@ -65,6 +65,7 @@ yielding:
   clip_seconds_before: 6     # each clip starts this long before the vehicle reaches the crosswalk
   clip_seconds_after: 3
   max_clips: 60
+  clip_outcomes: [did_not_yield]   # add yielded / too_close_to_stop to clip those too
 
 output:
   video: true

@@ -97,3 +97,11 @@ def test_cleared_half_is_not_a_conflict():
     # Eastbound (far lane) vehicle passes late in the crossing, after the ped left the far half.
     got = outcomes(ya.analyze([ped], [vehicle(ya, 5, "eastbound", 0.75, passes=109.5, mph=22)]))
     assert 5 not in got
+
+
+def test_stop_after_pedestrian_finished_is_not_a_yield():
+    ya = analyzer()
+    ped = ped_crossing_far_to_near(ya, 100.0)    # done crossing by ~110
+    # Westbound vehicle that stops 113-117 (for something else), long after the pedestrian left.
+    got = outcomes(ya.analyze([ped], [vehicle(ya, 6, "westbound", 0.25, passes=118.0, mph=15, stop_for=4)]))
+    assert 6 not in got

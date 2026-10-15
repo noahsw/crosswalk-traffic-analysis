@@ -50,6 +50,7 @@ DEFAULTS = {
         "clip_seconds_before": 6.0,
         "clip_seconds_after": 3.0,
         "max_clips": 60,
+        "clip_outcomes": ["did_not_yield"],
     },
     "output": {
         "video": True,

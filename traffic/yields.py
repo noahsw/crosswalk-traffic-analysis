@@ -58,6 +58,11 @@ class YieldEvent:
     min_speed_mph: float | None
     outcome: str
     clip: str = ""
+    others: list = field(default_factory=list)   # other pedestrians crossing together
+
+    @property
+    def crossings(self) -> list:
+        return [self.crossing] + self.others
 
 
 def _median_smooth(values: np.ndarray, k: int = 5) -> np.ndarray:
@@ -75,6 +80,7 @@ class YieldAnalyzer:
         self.stopped_mph = float(y["stopped_mph"])
         self.lanes = dict(y.get("lanes") or {})
         self.direction_of = direction_of
+        self.frame_w, self.frame_h = cal.get("image_size") or (1920, 1080)
 
         cw = np.asarray(cal["crosswalk"], float)
         self.crosswalk = cw.astype(np.float32)
@@ -153,7 +159,10 @@ class YieldAnalyzer:
     def speed_mph(self, v: VehicleTrack, t_from: float, t_to: float,
                   window: float = 1.0) -> list[tuple[float, float]]:
         """Approximate (time, mph) over sliding `window`-second spans between t_from and t_to."""
-        pts = [(t, x, y) for t, x, y in v.path if t_from - window <= t <= t_to + 0.01]
+        # A box cut off by the frame edge doesn't move with the vehicle, so skip those samples.
+        clipped = {t for t, b in v.boxes if b[0] <= 3 or b[2] >= self.frame_w - 3 or b[3] >= self.frame_h - 3}
+        pts = [(t, x, y) for t, x, y in v.path
+               if t_from - window <= t <= t_to + 0.01 and t not in clipped]
         out = []
         j = 0
         for i in range(len(pts)):
@@ -192,7 +201,8 @@ class YieldAnalyzer:
         times = [p[0] for p in passes]
 
         crossings = []
-        for ped in peds:
+        judged: dict[int, YieldEvent] = {}   # one judgement per vehicle, even for a group crossing
+        for ped in sorted(peds, key=lambda p: p.first_pts):
             c = self.crossing_for(ped)
             if c is None:
                 continue
@@ -211,11 +221,20 @@ class YieldAnalyzer:
                 speed = float(np.median([x[1] for x in at])) if at else None
                 lead = tv - c.wait_start
                 if min_speed < self.stopped_mph:
-                    # It stopped: did the pedestrian need that lane at the moment it was stopped?
-                    ok, phase = self.conflicts(c, direction, min(max(t_slowest, c.wait_start), c.exit))
-                    if not ok or direction in yielded_dirs:
+                    # It stopped. Only a yield if that was while the pedestrian was trying to cross
+                    # and needed this lane.
+                    if not (c.wait_start - 0.5 <= t_slowest <= c.exit + 0.5):
+                        if tv > c.exit:
+                            continue
+                        outcome = "too_close_to_stop" if lead < self.min_lead else "did_not_yield"
+                        ok, phase = self.conflicts(c, direction, tv)
+                        if not ok:
+                            continue
+                    else:
+                        ok, phase = self.conflicts(c, direction, t_slowest)
+                        outcome = "yielded"
+                    if not ok or (outcome == "yielded" and direction in yielded_dirs):
                         continue   # stopped for something else, or queued behind a yielding vehicle
-                    outcome = "yielded"
                 else:
                     if tv > c.exit:
                         continue   # arrived after the pedestrian had finished
@@ -225,7 +244,14 @@ class YieldAnalyzer:
                     outcome = "too_close_to_stop" if lead < self.min_lead else "did_not_yield"
                 if outcome == "yielded":
                     yielded_dirs.add(direction)
-                c.events.append(YieldEvent(c, v, direction, tv, phase, lead, speed, min_speed, outcome))
+                if id(v) in judged:
+                    # Same driver, another pedestrian in the same group: count the driver once.
+                    judged[id(v)].others.append(c)
+                    c.events.append(judged[id(v)])
+                    continue
+                e = YieldEvent(c, v, direction, tv, phase, lead, speed, min_speed, outcome)
+                judged[id(v)] = e
+                c.events.append(e)
         return crossings
 
 

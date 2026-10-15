@@ -36,29 +36,31 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
     directions = Analyzer(cfg, cal, start_time)
     crossings = YieldAnalyzer(cfg, cal, directions.direction_of).analyze(
         data["pedestrians"], data["vehicles"])
-    events = [e for c in crossings for e in c.events]
+    events = list({id(e): e for c in crossings for e in c.events}.values())
     y = cfg["yielding"]
 
     clip_dir = out / "yield_clips"
     shutil.rmtree(clip_dir, ignore_errors=True)
     if make_clips:
-        misses = sorted((e for e in events if e.outcome == "did_not_yield"), key=lambda e: e.passes)
+        wanted = set(y.get("clip_outcomes") or ["did_not_yield"])
+        misses = sorted((e for e in events if e.outcome in wanted), key=lambda e: e.passes)
         misses = misses[:int(y["max_clips"])]
         if misses:
             clip_dir.mkdir()
-            log(f"Rendering {len(misses)} clip(s) of drivers not yielding...")
+            log(f"Rendering {len(misses)} clip(s): {', '.join(sorted(wanted))}...")
         for i, e in enumerate(misses, 1):
             ts = start_time + timedelta(seconds=e.passes)
-            path = clip_dir / f"{ts:%H%M%S}_{e.direction}_V{e.vehicle.tid}.mp4"
+            path = clip_dir / f"{ts:%H%M%S}_{e.outcome}_{e.direction}_V{e.vehicle.tid}.mp4"
             render_clip(Path(data["video"]), path, e, cal["crosswalk"], start_time,
                         float(y["clip_seconds_before"]), float(y["clip_seconds_after"]))
             e.clip = f"yield_clips/{path.name}"
             log(f"  {i}/{len(misses)} {path.name}")
-        if misses:
-            concat([out / e.clip for e in misses], clip_dir / "all_did_not_yield.mp4")
+        not_yield = [e for e in misses if e.outcome == "did_not_yield"]
+        if not_yield:
+            concat([out / e.clip for e in not_yield], clip_dir / "all_did_not_yield.mp4")
 
     rows = [{
-        "pedestrian": f"P{e.crossing.ped.tid}",
+        "pedestrian": "+".join(f"P{c.ped.tid}" for c in e.crossings),
         "pedestrian_direction": e.crossing.direction,
         "started_waiting_local": local(start_time, e.crossing.wait_start),
         "wait_at_curb_s": round(e.crossing.wait_s, 1),

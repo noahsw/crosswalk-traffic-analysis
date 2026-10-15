@@ -206,8 +206,9 @@ def _yield_summary(out_dir: Path, crossings: int) -> dict | None:
     waits = pd.to_numeric(peds.get("wait_at_curb_s", pd.Series(dtype=float)), errors="coerce").dropna()
     return {
         "crossings": crossings,
-        "crossings_with_approaching_vehicle": int(ev["pedestrian"].nunique()) if len(ev) else 0,
-        "crossings_with_driver_not_yielding": int(missed["pedestrian"].nunique()) if len(missed) else 0,
+        "crossings_with_approaching_vehicle": _crossings_with(peds, ["drivers_did_not_yield", "drivers_yielded",
+                                                                     "too_close_to_stop"]),
+        "crossings_with_driver_not_yielding": _crossings_with(peds, ["drivers_did_not_yield"]),
         "yielded": yielded,
         "did_not_yield": int(len(missed)),
         "did_not_yield_in_crosswalk": int((missed["pedestrian_was"] == "in_crosswalk").sum()) if len(missed) else 0,
@@ -217,7 +218,14 @@ def _yield_summary(out_dir: Path, crossings: int) -> dict | None:
         "avg_wait_at_curb_s": round(float(waits.mean()), 1) if len(waits) else None,
         "max_wait_at_curb_s": round(float(waits.max()), 1) if len(waits) else None,
         "clips": int((missed["clip"] != "").sum()) if len(missed) else 0,
+        "note_groups": bool(len(ev)) and ev["pedestrian"].astype(str).str.contains("\\+").any(),
     }
+
+
+def _crossings_with(peds: pd.DataFrame, cols: list[str]) -> int:
+    if not all(c in peds.columns for c in cols):
+        return 0
+    return int((peds[cols].fillna(0).sum(axis=1) > 0).sum())
 
 
 def _yield_markdown(y: dict) -> list[str]:
@@ -231,6 +239,12 @@ def _yield_markdown(y: dict) -> list[str]:
                  f"{y['did_not_yield']} did not).")
     L.append(f"  - Drove through while the pedestrian was **in the crosswalk**: {y['did_not_yield_in_crosswalk']}")
     L.append(f"  - Drove past a pedestrian **waiting at the curb**: {y['did_not_yield_waiting']}")
+    judged = y["yielded"] + y["did_not_yield"]
+    if judged < 10:
+        L.append(f"- **Small sample:** only {judged} driver(s) met a pedestrian in this recording, too few "
+                 "for a reliable yield rate. Record more sessions, ideally when more people walk.")
+    if y.get("note_groups"):
+        L.append("- When people cross together, each driver is judged once for the group.")
     L.append(f"- Arrived too soon after the pedestrian appeared to be expected to stop (not counted above): "
              f"{y['too_close_to_stop']}")
     if y["avg_wait_at_curb_s"] is not None:
