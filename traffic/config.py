@@ -53,6 +53,17 @@ DEFAULTS = {
         "max_clips": 60,
         "clip_outcomes": ["did_not_yield"],
     },
+    "live": {
+        "host": None,
+        "port": 554,
+        "keychain_item": "tapo-camera",
+        "stream": "stream1",
+        "calibration": "calibration.tapo.yaml",
+        "stride": 1,
+        "segment_seconds": 10,
+        "keep_minutes": 10,
+        "max_lag_seconds": 2,
+    },
     "output": {
         "video": True,
         "height": None,

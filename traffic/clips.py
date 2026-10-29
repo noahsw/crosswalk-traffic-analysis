@@ -31,18 +31,31 @@ def caption_for(e: YieldEvent) -> str:
     return f"{e.direction.capitalize()} vehicle arrived too soon to stop for {who}"
 
 
-def render_clip(video: Path, out_path: Path, e: YieldEvent, crosswalk, start_time,
-                seconds_before: float, seconds_after: float) -> None:
+def clip_name(start_time, e: YieldEvent) -> str:
+    ts = start_time + timedelta(seconds=e.passes)
+    return f"{ts:%Y%m%d_%H%M%S}_{e.outcome}_{e.direction or 'unknown'}_V{e.vehicle.tid}.mp4"
+
+
+def clip_window(e: YieldEvent, seconds_before: float, seconds_after: float) -> tuple[float, float]:
+    """(start, end) of an event's clip, in seconds on the tracks' timeline."""
     c = e.crossing
     t0 = max(0.0, min(e.passes - 4.0, max(c.wait_start - 1.0, e.passes - seconds_before)))
-    t1 = e.passes + seconds_after
-    reader = FrameReader(video, start=t0, duration=t1 - t0)
+    return t0, e.passes + seconds_after
+
+
+def render_clip(video: Path, out_path: Path, e: YieldEvent, crosswalk, start_time,
+                seconds_before: float, seconds_after: float, offset: float = 0.0) -> None:
+    """`offset` is where `video` starts on the tracks' timeline (for a piece of a live stream)."""
+    t0, t1 = clip_window(e, seconds_before, seconds_after)
+    c = e.crossing
+    reader = FrameReader(video, start=max(0.0, t0 - offset), duration=t1 - t0)
     info = reader.info
     writer = VideoWriter(out_path, info.width, info.height, info.fps, bitrate="5M")
     cw = np.asarray(crosswalk, np.int32)
     caption = caption_for(e)
     color = render.RED if e.outcome == "did_not_yield" else render.GREEN
     for pts, frame in reader:
+        pts += offset
         layer = frame.copy()
         cv2.fillPoly(layer, [cw], render.CROSSWALK_COLOR)
         cv2.addWeighted(layer, 0.3, frame, 0.7, 0, dst=frame)

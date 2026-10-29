@@ -106,7 +106,9 @@ def compute_summary(out_dir: Path, cfg: dict) -> dict:
 
     start = datetime.fromisoformat(meta["window_start"])
     end = datetime.fromisoformat(meta["window_end"])
-    hours = (end - start).total_seconds() / 3600
+    # Per-hour rates count only the time something was watched.
+    not_watched = sum(g["minutes"] for g in meta.get("not_watched", [])) * 60
+    hours = ((end - start).total_seconds() - not_watched) / 3600
 
     motor = veh[veh["class"] != "bicycle"]
     counted = motor[motor["counted"]]
@@ -133,6 +135,9 @@ def compute_summary(out_dir: Path, cfg: dict) -> dict:
         b1 = b + timedelta(minutes=15)
         sel = counted[(counted_t >= b.replace(tzinfo=None)) & (counted_t < b1.replace(tzinfo=None))]
         covered = (min(b1, end) - max(b, start)).total_seconds() / 60
+        for g in meta.get("not_watched", []):
+            g0, g1 = datetime.fromisoformat(g["start"]), datetime.fromisoformat(g["end"])
+            covered -= max(0.0, (min(b1, g1) - max(b, g0)).total_seconds() / 60)
         lo, hi = (b - start).total_seconds(), (b1 - start).total_seconds()
         in_bin = delays[(arrivals >= lo) & (arrivals < hi)]
         bins.append({"start": b.strftime("%H:%M"), "end": b1.strftime("%H:%M"),
@@ -160,6 +165,7 @@ def compute_summary(out_dir: Path, cfg: dict) -> dict:
     summary = {
         "recording": {"source": meta["source"], "start": meta["window_start"],
                       "end": meta["window_end"], "duration_minutes": round(hours * 60, 1),
+                      "not_watched": meta.get("not_watched", []),
                       "start_time_source": meta["start_time_source"]},
         "vehicles": {
             "counted_total": int(len(counted)),
@@ -442,6 +448,12 @@ def _markdown(s: dict, directions: list[str]) -> str:
     L.append(f"# Traffic study: {s.get('site_name') or 'crosswalk'}\n")
     L.append(f"**Recording:** {start:%a %b %d %Y}, {start:%H:%M:%S} to {end:%H:%M:%S} PT "
              f"({r['duration_minutes']} minutes). Start time from {r['start_time_source']}.\n")
+    if r.get("not_watched"):
+        gaps = "; ".join(f"{datetime.fromisoformat(g['start']):%H:%M}–"
+                         f"{datetime.fromisoformat(g['end']):%H:%M} ({g['minutes']:g} min)"
+                         for g in r["not_watched"])
+        L.append(f"**Not watched** (computer asleep or camera offline): {gaps}. The minutes above "
+                 f"and the per-hour rates leave these out.\n")
 
     L.append("## Vehicles through the crosswalk\n")
     L.append(f"- **{v['counted_total']} motor vehicles** crossed the count line "

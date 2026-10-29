@@ -120,6 +120,95 @@ The first step always copies the video without its audio track into `work/`.
 Nothing after that reads the original file, and the finished video is checked
 automatically to make sure it has no audio.
 
+## Live camera (Tapo C120)
+
+`live.py` watches a Tapo C120 (or any camera with an RTSP stream) instead of a recording.
+It saves a clip of every driver who doesn't yield to a pedestrian as it happens. When you
+stop it, it writes the usual CSVs and `summary.md` for the whole session.
+
+### Camera setup (once)
+
+1. In the Tapo app, open the camera, then **Settings → Advanced Settings → Camera Account**,
+   and create a user name and password. This is a separate login just for the camera, not
+   your TP-Link account. On newer firmware you may also need to turn on
+   **Me → Tapo Lab → Third-Party Compatibility**.
+2. Find the camera's IP address (in the app under **Settings → Device Info**, or in your
+   router), and reserve it in your router so it doesn't change. Put it in `config.yaml`:
+
+   ```yaml
+   live:
+     host: 192.168.1.50
+   ```
+
+3. Save the camera account in the macOS Keychain, so the password is never in a project
+   file. Run this once, with your camera user name; it asks for the password without showing
+   it:
+
+   ```bash
+   security add-generic-password -U -s tapo-camera -a your-camera-user -w
+   ```
+
+   Run it again to change the password (`-U` replaces the saved one). The item is named
+   `tapo-camera` in the Keychain Access app; to use another name, set `live.keychain_item`
+   in `config.yaml`. If `TAPO_USER` and `TAPO_PASSWORD` are both set in the environment,
+   they are used instead.
+
+4. Mount the camera where it sees the crosswalk and both approaches, the same way as the
+   phone (see Recording tips). Then draw the scene on the camera's own view. The camera's
+   framing and resolution differ from the phone's, so it gets its own calibration file,
+   `calibration.tapo.yaml`:
+
+   ```bash
+   uv run python calibrate.py --camera
+   ```
+
+   Enter the same red-curb length (25.92 ft) for the speed trap. Check
+   `calibration.tapo_preview.jpg` afterwards. The C120 also sends audio, but it is never
+   decoded or saved.
+
+### Running
+
+```bash
+uv run python live.py              # until Ctrl+C
+uv run python live.py --hours 8    # stop by itself after 8 hours
+```
+
+Press **Ctrl+C** (or `kill` the process) to stop. Everything goes to `out/live_<date>_<time>/`:
+
+- `yield_clips/`: one clip per driver who did not yield, saved about 20 seconds after it
+  happens. The pedestrian has to finish crossing first, and every car that could still count
+  has to pass. These are the same clips as for a recording, with the date in the file name.
+- `yield_log.csv`: one row per judged driver, added as soon as they are judged, with the
+  clip's file name. Clips and this log are already on disk if the session never finishes
+  (battery dies, a crash); the files below are only written on stop.
+- On stop: `vehicles.csv`, `pedestrians.csv`, `yield_events.csv`, `summary.md`, the review
+  images and `yield_clips/all_did_not_yield.mp4`. Live mode doesn't write an annotated video.
+
+To keep clips, the stream is also recorded in 10-second pieces under `work/live/`. Pieces
+older than 10 minutes are deleted, and the folder is removed when the session ends. If the
+camera drops off Wi-Fi, `live.py` reconnects every 5 seconds and carries on.
+
+**Sleep.** While `live.py` runs, it keeps the Mac from sleeping when idle (and from any
+sleep while on power), so there's no need for `caffeinate`. Closing the lid still puts a
+MacBook to sleep, unless it's on power with an external display attached. If the Mac does
+sleep, nothing is watched while it's asleep, but nothing already seen is lost: on wake,
+crossings from before the sleep are judged and their clips saved, and the session carries
+on. `summary.md` lists the time with no video, and leaves it out of the per-hour rates.
+
+A status line every minute shows `skipped N frame(s)`. If that keeps growing, detection
+can't keep up with the camera. Use `--stride 2`, or `detection.model: models/yolo11s.pt`
+in `config.yaml`.
+
+To rehearse without the camera, play a recording back at real speed as if it were live,
+using the phone's calibration:
+
+```bash
+uv run python live.py input/VIDEO.MOV --calibration calibration.yaml
+```
+
+The `yielding` settings in `config.yaml` apply to both modes. `waiting_area_px` is in image
+pixels, so it may need adjusting for the camera's view.
+
 ## Reading the outputs
 
 **summary.md** is the report: the recording window, vehicles counted (total, per hour,

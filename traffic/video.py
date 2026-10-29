@@ -129,30 +129,28 @@ def read_frame_at(path: Path, seconds: float) -> np.ndarray:
 _PTS_RE = re.compile(r"\bn:\s*\d+\s+pts:\s*-?\d+\s+pts_time:\s*(-?[\d.]+)")
 
 
-class FrameReader:
-    """Iterate (pts_seconds, bgr_frame) over a video using an ffmpeg pipe.
+# Decode video stream 0 to raw BGR on stdout, logging each frame's PTS on stderr.
+RAW_OUTPUT = ["-map", "0:v:0", "-an", "-sn", "-dn", "-fps_mode", "passthrough", "-vf", "showinfo",
+              "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
 
-    `start`/`duration` limit the range (seconds). PTS values are absolute
-    within the source (relative to the stream start), even when seeking.
-    """
 
-    def __init__(self, path: Path, start: float = 0.0, duration: float | None = None):
+class RawFrames:
+    """Iterate (pts_seconds, bgr_frame) from an ffmpeg command ending in RAW_OUTPUT."""
+
+    def __init__(self, cmd: list[str], width: int, height: int, **popen_kw):
         _require("ffmpeg")
-        self.info = probe(path)
-        cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info", "-copyts"]
-        if start:
-            cmd += ["-ss", f"{start:.3f}"]
-        if duration:
-            cmd += ["-t", f"{duration:.3f}"]
-        cmd += ["-i", str(path), "-map", "0:v:0", "-an", "-sn", "-dn",
-                "-fps_mode", "passthrough", "-vf", "showinfo",
-                "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+        self.width, self.height = width, height
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                      bufsize=0)
+                                      bufsize=0, **popen_kw)
         self._pts: queue.Queue[float | None] = queue.Queue()
         self._log: list[str] = []
         threading.Thread(target=self._read_stderr, daemon=True).start()
-        self._frame_bytes = self.info.width * self.info.height * 3
+        self._frame_bytes = width * height * 3
+
+    @property
+    def log(self) -> list[str]:
+        """The last lines ffmpeg printed, other than per-frame info."""
+        return list(self._log)
 
     def _read_stderr(self) -> None:
         for line in iter(self._proc.stderr.readline, b""):
@@ -168,7 +166,7 @@ class FrameReader:
     def __iter__(self):
         buf = bytearray(self._frame_bytes)
         view = memoryview(buf)
-        h, w = self.info.height, self.info.width
+        h, w = self.height, self.width
         while True:
             got = 0
             while got < self._frame_bytes:
@@ -182,13 +180,36 @@ class FrameReader:
             if pts is None:
                 raise VideoError("ffmpeg produced a frame without a timestamp")
             frame = np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()
-            yield pts - self.info.start_pts, frame
+            yield pts, frame
         self.close()
 
     def close(self) -> None:
         if self._proc.poll() is None:
             self._proc.kill()
         self._proc.wait()
+
+
+class FrameReader(RawFrames):
+    """Iterate (pts_seconds, bgr_frame) over a video file.
+
+    `start`/`duration` limit the range (seconds). PTS values are absolute
+    within the source (relative to the stream start), even when seeking.
+    """
+
+    def __init__(self, path: Path, start: float = 0.0, duration: float | None = None):
+        _require("ffmpeg")
+        self.info = probe(path)
+        cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "info", "-copyts"]
+        if start:
+            cmd += ["-ss", f"{start:.3f}"]
+        if duration:
+            cmd += ["-t", f"{duration:.3f}"]
+        cmd += ["-i", str(path), *RAW_OUTPUT]
+        super().__init__(cmd, self.info.width, self.info.height)
+
+    def __iter__(self):
+        for pts, frame in super().__iter__():
+            yield pts - self.info.start_pts, frame
 
 
 class VideoWriter:

@@ -76,6 +76,21 @@ yielding:
   max_clips: 60
   clip_outcomes: [did_not_yield]   # add yielded / too_close_to_stop to clip those too
 
+# Live mode (live.py): a Tapo C120 or other RTSP camera instead of a recorded video.
+# The camera account's user name and password are kept in the macOS Keychain, never in this
+# file (see the README).
+
+live:
+  host: 192.168.86.90                  # the camera's IP address on your network, e.g. 192.168.1.50
+  port: 554
+  keychain_item: tapo-camera   # Keychain item with the camera account (see the README)
+  stream: stream1             # stream1 = full resolution, stream2 = low resolution
+  calibration: calibration.tapo.yaml   # scene geometry drawn on the camera's own view
+  stride: 1                   # detect on every frame (the C120 sends 20 fps at 1920x1080)
+  segment_seconds: 10         # the stream is recorded in pieces this long, to cut clips from
+  keep_minutes: 10            # pieces older than this are deleted
+  max_lag_seconds: 2          # if detection falls further behind than this, frames are skipped
+
 output:
   video: true
   height: null        # null = same as input; set 720 to downscale

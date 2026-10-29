@@ -10,5 +10,6 @@ __pycache__/
 .DS_Store
 
 # Site-specific: reveals the camera location. Commit calibration.example.yaml instead.
-calibration.yaml
-calibration_preview.jpg
+calibration*.yaml
+!calibration.example.yaml
+calibration*_preview.jpg
