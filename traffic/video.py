@@ -66,6 +66,13 @@ def probe(path: Path) -> VideoInfo:
     )
 
 
+def packet_times(path: Path) -> list[float]:
+    """Each video packet's timestamp, in file order: the frame order, for a stream without
+    B-frames like the camera's."""
+    d = ffprobe_json(path, "-select_streams", "v:0", "-show_entries", "packet=pts_time")
+    return [float(p["pts_time"]) for p in d.get("packets", []) if p.get("pts_time") not in (None, "N/A")]
+
+
 def audio_stream_count(path: Path) -> int:
     d = ffprobe_json(path, "-select_streams", "a", "-show_entries", "stream=index")
     return len(d.get("streams", []))

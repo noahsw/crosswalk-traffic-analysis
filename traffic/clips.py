@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from . import render
-from .video import FrameReader, VideoWriter, assert_no_audio
+from .video import FrameReader, VideoWriter, assert_no_audio, probe
 from .yields import YieldEvent, box_at
 
 OUTCOME_TEXT = {
@@ -44,19 +44,34 @@ def clip_window(e: YieldEvent, seconds_before: float, seconds_after: float) -> t
     return t0, e.passes + seconds_after
 
 
+def _frames(video: Path, t0: float, t1: float, offset: float, times: list[float] | None):
+    """(time on the tracks' timeline, frame) from t0 to t1.
+
+    `offset` is where `video` starts on the tracks' timeline (for a piece of a live stream).
+    `times`, if given, is the time of each of its frames as the tracks timed them, for video
+    whose own timestamps were replaced (see live.SteadyClock).
+    """
+    if times is None:
+        for pts, frame in FrameReader(video, start=max(0.0, t0 - offset), duration=t1 - t0):
+            yield pts + offset, frame
+        return
+    for t, (_, frame) in zip(times, FrameReader(video)):
+        if t0 <= t <= t1:
+            yield t, frame
+
+
 def render_clip(video: Path, out_path: Path, e: YieldEvent, crosswalk, start_time,
-                seconds_before: float, seconds_after: float, offset: float = 0.0) -> None:
-    """`offset` is where `video` starts on the tracks' timeline (for a piece of a live stream)."""
+                seconds_before: float, seconds_after: float, offset: float = 0.0,
+                times: list[float] | None = None) -> None:
+    """`offset` and `times`: see _frames."""
     t0, t1 = clip_window(e, seconds_before, seconds_after)
     c = e.crossing
-    reader = FrameReader(video, start=max(0.0, t0 - offset), duration=t1 - t0)
-    info = reader.info
+    info = probe(video)
     writer = VideoWriter(out_path, info.width, info.height, info.fps, bitrate="5M")
     cw = np.asarray(crosswalk, np.int32)
     caption = caption_for(e)
     color = render.RED if e.outcome == "did_not_yield" else render.GREEN
-    for pts, frame in reader:
-        pts += offset
+    for pts, frame in _frames(video, t0, t1, offset, times):
         layer = frame.copy()
         cv2.fillPoly(layer, [cw], render.CROSSWALK_COLOR)
         cv2.addWeighted(layer, 0.3, frame, 0.7, 0, dst=frame)
@@ -112,19 +127,19 @@ def crossing_window(crossings, seconds_before: float, seconds_after: float) -> t
 
 
 def render_crossing_clip(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_time,
-                         seconds_before: float, seconds_after: float, offset: float = 0.0) -> None:
-    """Every vehicle in view is boxed: judged drivers by outcome (red = did not yield), others gray."""
+                         seconds_before: float, seconds_after: float, offset: float = 0.0,
+                         times: list[float] | None = None) -> None:
+    """Every vehicle in view is boxed: judged drivers by outcome (red = did not yield), others gray.
+    `offset` and `times`: see _frames."""
     t0, t1 = crossing_window(crossings, seconds_before, seconds_after)
     judged = {e.vehicle.tid: e.outcome for c in crossings for e in c.events}
     vehicles = [v for v in vehicles if v.kind == "vehicle" and v.boxes
                 and v.boxes[0][0] <= t1 and v.boxes[-1][0] >= t0]
-    reader = FrameReader(video, start=max(0.0, t0 - offset), duration=t1 - t0)
-    info = reader.info
+    info = probe(video)
     writer = VideoWriter(out_path, info.width, info.height, info.fps, bitrate="5M")
     cw = np.asarray(crosswalk, np.int32)
     caption = crossing_caption(crossings)
-    for pts, frame in reader:
-        pts += offset
+    for pts, frame in _frames(video, t0, t1, offset, times):
         layer = frame.copy()
         cv2.fillPoly(layer, [cw], render.CROSSWALK_COLOR)
         cv2.addWeighted(layer, 0.3, frame, 0.7, 0, dst=frame)

@@ -33,7 +33,7 @@ import numpy as np
 
 from .clips import (clip_name, clip_window, crossing_name, crossing_window, render_clip,
                     render_crossing_clip)
-from .video import RAW_OUTPUT, RawFrames, VideoError, _require, ffprobe_json
+from .video import RAW_OUTPUT, RawFrames, VideoError, _require, ffprobe_json, packet_times
 from .yields import Crossing, YieldAnalyzer, YieldEvent
 
 USER_ENV, PASSWORD_ENV = "TAPO_USER", "TAPO_PASSWORD"
@@ -190,6 +190,9 @@ class LiveSource:
         self.reconnects = 0
         self._t0: float | None = None             # time.time() at session time 0
         self._segments: list[Segment] = []        # from finished connections
+        # (camera timestamp, session time) of each recent frame, both on the session timeline,
+        # to give clip frames the times their tracks have (see frame_times).
+        self._times: deque[tuple[float, float]] = deque(maxlen=int(fps * (keep_seconds + 60)))
         self._open: tuple[Path, float] | None = None   # (folder, time offset) of the current connection
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -226,8 +229,8 @@ class LiveSource:
             error = ""
             clock = SteadyClock()
             try:
-                for pts, frame in reader:
-                    pts = clock(pts)
+                for stamp, frame in reader:
+                    pts = clock(stamp)
                     if offset is None:
                         # Wall clock, not time.monotonic(): on a Mac that stops while asleep.
                         now = time.time()
@@ -238,6 +241,8 @@ class LiveSource:
                         with self._lock:
                             self._open = (folder, offset)
                     t = pts + offset
+                    with self._lock:
+                        self._times.append((stamp + offset, t))
                     try:
                         self.frames.put_nowait((t, frame))
                     except queue.Full:
@@ -317,6 +322,35 @@ class LiveSource:
             kept += s.end - s.start
         with self._lock:
             self._segments = [s for s in self._segments if s.path.exists()]
+
+    def frame_times(self, piece: Path, start: float) -> list[float] | None:
+        """The session time of each frame in `piece` (cut to start at session time `start`), as
+        the frames were timed for tracking, or None if they can't be matched up.
+
+        The recording keeps the camera's own timestamps, up to half a second off the times the
+        tracks use, so a clip timed by them draws boxes ahead of or behind the vehicles. The
+        frames are found among the recently seen ones by those same timestamps: their uneven
+        pattern only lines up one way.
+        """
+        stamps = np.asarray(packet_times(piece))
+        with self._lock:
+            seen = np.asarray(self._times)
+        n = min(len(stamps), 100)
+        if n < 20 or len(seen) < n:
+            return None
+        piece_stamps = start + stamps - stamps[0]
+        k0 = int(np.argmin(np.abs(seen[:, 0] - piece_stamps[0])))
+        shifts = range(max(0, k0 - 100), min(len(seen) - n, k0 + 100) + 1)
+        if not shifts:
+            return None
+        err, k = min((float(np.median(np.abs(seen[s:s + n, 0] - piece_stamps[:n]))), s) for s in shifts)
+        if err > 0.01:
+            return None
+        times = list(seen[k:k + len(stamps), 1])
+        period = (seen[-1, 1] - seen[-n, 1]) / (n - 1)
+        while len(times) < len(stamps):   # frames not seen yet: one frame period apart
+            times.append(times[-1] + period)
+        return times
 
     def cut(self, t0: float, t1: float, dst: Path) -> float | None:
         """Copy the recording from session time t0 to t1 into `dst`.
@@ -470,9 +504,9 @@ class ClipSaver:
             path = clip.clip_dir / clip_name(self.start_time, e)
             window = clip_window(e, self.before, self.after)
 
-            def render(piece, offset):
+            def render(piece, offset, times):
                 render_clip(piece, path, e, self.cal["crosswalk"], self.start_time,
-                            self.before, self.after, offset=offset)
+                            self.before, self.after, offset=offset, times=times)
         else:
             crossings = [j.crossing for j in clip.group]
             vehicles = list({id(v): v for j in clip.group for v in j.vehicles}.values())
@@ -480,15 +514,19 @@ class ClipSaver:
             path = clip.clip_dir / crossing_name(self.start_time, crossings)
             window = crossing_window(crossings, before, after)
 
-            def render(piece, offset):
+            def render(piece, offset, times):
                 render_crossing_clip(piece, path, crossings, vehicles, self.cal["crosswalk"],
-                                     self.start_time, before, after, offset=offset)
+                                     self.start_time, before, after, offset=offset, times=times)
         piece = self.source.work / f"{path.stem}.mkv"
         try:
             offset = self.source.cut(*window, piece)
             if offset is None:
                 return False
-            render(piece, offset)
+            times = self.source.frame_times(piece, offset)
+            if times is None:
+                self.log(f"{path.name}: couldn't match its frames to the tracks' times, so its "
+                         "boxes may be up to half a second off")
+            render(piece, offset, times)
             self.saved += 1
             self.log(f"Saved {path}")
         except (VideoError, subprocess.CalledProcessError) as ex:
