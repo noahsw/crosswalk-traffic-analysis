@@ -1,14 +1,17 @@
-"""Watch a live camera (e.g. a Tapo C120) and save a clip of every driver who doesn't yield.
+"""Watch a live camera (e.g. a Tapo C120) and save a clip of every driver who doesn't yield,
+and of every pedestrian crossing.
 
     uv run python live.py                         # the camera at live.host in config.yaml
     uv run python live.py --host 192.168.1.50
     uv run python live.py --hours 8               # stop by itself after 8 hours
+    uv run python live.py --show                  # also show the tracking in a window
     uv run python live.py input/VIDEO.MOV --calibration calibration.yaml   # rehearse on a recording
 
 The camera account comes from the macOS Keychain (see the README), or from the TAPO_USER and
 TAPO_PASSWORD environment variables if both are set.
-Press Ctrl+C to stop. Clips are saved to out/live_<date>_<time>/yield_clips/ as they happen
-(about 20 s after each crossing), and each judged driver is added to yield_log.csv right away.
+Press Ctrl+C to stop. Clips are saved to out/live_<date>_<time>/yield_clips/ and
+crossing_clips/ as they happen (about 20 s after each crossing), and each crossing and judged
+driver is added to yield_log.csv right away.
 On stop, the usual CSVs and summary.md are written for the whole session.
 
 While it runs, the Mac is kept from sleeping on its own (closing the lid still sleeps it). After
@@ -32,20 +35,51 @@ from itertools import chain
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from traffic.clips import caption_for, clip_name
+import cv2
+
+from traffic.clips import caption_for, crossing_caption
 from traffic.config import load_calibration, load_config
 from traffic.live import ClipSaver, LiveSource, LiveYieldWatcher, camera_url, probe_stream, redact
-from traffic.pipeline import Detector, new_analyzer, write_run
+from traffic.pipeline import Annotator, Detector, new_analyzer, write_run
 from traffic.report import write_summary
 from traffic.video import VideoError
 from yielding import analyze_yields
 
 
 GAP_SECONDS = 2.0   # a longer jump between frames means the video stopped (asleep, reconnect)
+WINDOW = "live.py - press q in this window to hide it, Ctrl+C in the terminal to stop"
+WINDOW_WIDTH = 1280
 
 
 def status(msg: str) -> None:
     print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
+
+
+class Window:
+    """Shows each frame with the tracking overlay. Closing it (or q) only hides it."""
+
+    def __init__(self, annotator: Annotator):
+        self.annotator = annotator
+        self.open = True
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+
+    def show(self, frame, pts: float, analyzer) -> None:
+        if not self.open:
+            return
+        self.annotator.draw(frame, pts, analyzer)
+        h, w = frame.shape[:2]
+        cv2.imshow(WINDOW, cv2.resize(frame, (WINDOW_WIDTH, round(h * WINDOW_WIDTH / w)),
+                                      interpolation=cv2.INTER_AREA))
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), 27) or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+            self.close()
+            status("Window closed; still watching. Press Ctrl+C to stop.")
+
+    def close(self) -> None:
+        if self.open:
+            self.open = False
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
 
 
 def stop_on_sigterm() -> None:
@@ -77,6 +111,8 @@ def main() -> None:
     ap.add_argument("--stride", type=int, default=None, help="detect every Nth frame (overrides live.stride)")
     ap.add_argument("--hours", type=float, default=None, help="stop after this many hours")
     ap.add_argument("--no-clips", action="store_true", help="judge drivers but don't save clips")
+    ap.add_argument("--show", action="store_true",
+                    help="show the camera with the tracking overlay in a window")
     ap.add_argument("--progress-every", type=float, default=60.0,
                     help="seconds between status lines (default 60)")
     args = ap.parse_args()
@@ -125,28 +161,38 @@ def main() -> None:
     y = cfg["yielding"]
     watcher = LiveYieldWatcher(cfg, cal, analyzer) if y["enabled"] else None
     wanted = set(y.get("clip_outcomes") or ["did_not_yield"])
+    every_crossing = bool(y["clip_every_crossing"])
     saver = None
     if watcher and not args.no_clips:
-        saver = ClipSaver(source, out / "yield_clips", cal, start_time,
-                          float(y["clip_seconds_before"]), float(y["clip_seconds_after"]), log=status)
+        saver = ClipSaver(source, cal, start_time, float(y["clip_seconds_before"]),
+                          float(y["clip_seconds_after"]),
+                          crossing_seconds_before=float(y["crossing_clip_seconds_before"]), log=status)
     outcomes: Counter = Counter()
     log_path = out / "yield_log.csv"   # written as it goes, in case the session never finishes
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(["time_local", "outcome", "direction", "vehicle_id", "clip", "what"])
 
-    def handle(events) -> None:
-        for e in events:
-            outcomes[e.outcome] += 1
-            when = start_time + timedelta(seconds=e.passes)
-            status(f"{when:%H:%M:%S} {caption_for(e)}")
-            clip = ""
-            if saver and e.outcome in wanted:
-                saver.add(e)
-                clip = clip_name(start_time, e)
-            with open(log_path, "a", newline="") as f:
-                csv.writer(f).writerow([when.isoformat(timespec="seconds"), e.outcome,
-                                        e.direction or "", e.vehicle.tid, clip, caption_for(e)])
+    def log_row(when, outcome, direction, vehicle_id, clip, what) -> None:
+        with open(log_path, "a", newline="") as f:
+            csv.writer(f).writerow([when.isoformat(timespec="seconds"), outcome, direction,
+                                    vehicle_id, clip.name if clip else "", what])
 
+    def handle(judged) -> None:
+        for j in judged:
+            c = j.crossing
+            when = start_time + timedelta(seconds=c.wait_start)
+            status(f"{when:%H:%M:%S} {crossing_caption([c])}")
+            if saver and every_crossing:
+                saver.add_crossing(j, out / "crossing_clips")
+            log_row(when, "pedestrian_crossing", c.direction, "", None, crossing_caption([c]))
+            for e in j.events:
+                outcomes[e.outcome] += 1
+                when = start_time + timedelta(seconds=e.passes)
+                status(f"{when:%H:%M:%S} {caption_for(e)}")
+                clip = saver.add(e, out / "yield_clips") if saver and e.outcome in wanted else None
+                log_row(when, e.outcome, e.direction or "", e.vehicle.tid, clip, caption_for(e))
+
+    window = Window(Annotator(cfg, cal, start_time, (height, width))) if args.show else None
     status(f"Watching since {start_time:%a %b %d %H:%M:%S}. Press Ctrl+C to stop. Outputs -> {out}/")
     t0 = time.time()
     next_status = t0 + args.progress_every
@@ -175,7 +221,12 @@ def main() -> None:
             last_pts = pts
             frames_since += 1
             if n % stride == 0:
-                detector.step(pts, frame, analyzer)
+                tracked = detector.step(pts, frame, analyzer)
+                if window:
+                    window.annotator.update(tracked, analyzer)
+            # Skip drawing while behind, so the window never costs detection frames.
+            if window and source.lag_seconds < 0.5:
+                window.show(frame, pts, analyzer)
             if watcher and pts >= next_poll:
                 handle(watcher.poll(pts))
                 next_poll = pts + 1.0
@@ -184,7 +235,8 @@ def main() -> None:
                 if source.dropped > dropped_before and not gap_since_status and not warned_lag:
                     warned_lag = True
                     status("Detection can't keep up with the camera, so some frames are being skipped. "
-                           "If this keeps happening, use --stride 2 or a smaller model (detection.model).")
+                           f"If this keeps happening, use --stride {stride + 1} or a smaller model "
+                           "(detection.model).")
                 dropped_before, gap_since_status = source.dropped, False
                 rate = frames_since / max(now - since_status, 1e-6)
                 next_status, since_status, frames_since = now + args.progress_every, now, 0
@@ -198,6 +250,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print()
     status("Stopping...")
+    if window:
+        window.close()
     source.stop()
     analyzer.finalize_stale(last_pts, force=True)
     if watcher:

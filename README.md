@@ -22,6 +22,12 @@ uv sync
 The first run downloads the YOLO model (about 40 MB) into `models/`. On an M-series
 Mac it uses the GPU (Apple "MPS") automatically, and it falls back to the CPU on other machines.
 
+On a Mac, detection can run on the Neural Engine instead: set
+`detection.model: models/yolo11m.mlpackage` in `config.yaml`. It's exported from
+`yolo11m.pt` the first time (about a minute), then finds the same objects in about half the
+time and power. To re-export (say, after changing `detection.imgsz`), delete the
+`.mlpackage`.
+
 ## Recording tips
 
 - Record at **1080p, 30 fps**. 4K or 60 fps makes processing much slower and doesn't help counting.
@@ -123,8 +129,9 @@ automatically to make sure it has no audio.
 ## Live camera (Tapo C120)
 
 `live.py` watches a Tapo C120 (or any camera with an RTSP stream) instead of a recording.
-It saves a clip of every driver who doesn't yield to a pedestrian as it happens. When you
-stop it, it writes the usual CSVs and `summary.md` for the whole session.
+It saves a clip of every driver who doesn't yield to a pedestrian, and of every pedestrian
+crossing, as they happen. When you stop it, it writes the usual CSVs and `summary.md` for the
+whole session.
 
 ### Camera setup (once)
 
@@ -171,15 +178,29 @@ stop it, it writes the usual CSVs and `summary.md` for the whole session.
 ```bash
 uv run python live.py              # until Ctrl+C
 uv run python live.py --hours 8    # stop by itself after 8 hours
+uv run python live.py --show       # also watch the tracking live in a window
 ```
+
+`--show` opens a window with the same overlay as `annotated.mp4`: the crosswalk, count
+line, speed trap, gates, a box per tracked vehicle and person, and running counts. Press
+**q** in the window (or close it) to hide it; the session keeps going. The window is
+skipped on frames where detection is behind, so it never costs detections.
 
 Press **Ctrl+C** (or `kill` the process) to stop. Everything goes to `out/live_<date>_<time>/`:
 
 - `yield_clips/`: one clip per driver who did not yield, saved about 20 seconds after it
   happens. The pedestrian has to finish crossing first, and every car that could still count
   has to pass. These are the same clips as for a recording, with the date in the file name.
-- `yield_log.csv`: one row per judged driver, added as soon as they are judged, with the
-  clip's file name. Clips and this log are already on disk if the session never finishes
+- `crossing_clips/`: one clip per pedestrian crossing, so you can check the results by eye.
+  Each starts 10 seconds before the pedestrian is first seen waiting at the curb
+  (`yielding.crossing_clip_seconds_before`), so you can see whether they had to wait for
+  cars, and ends once they're across. Every car is boxed, with judged drivers in green
+  (yielded) or red (did not yield) and the rest in gray. People crossing together share one
+  clip. The file name has the time, direction, pedestrian ids and driver outcomes, e.g.
+  `20261029_150726_northbound_P260_2yielded.mp4`. Turn them off with
+  `yielding.clip_every_crossing: false`.
+- `yield_log.csv`: one row per pedestrian crossing and per judged driver, added as soon as
+  they are judged, with the driver clip's file name. Clips and this log are already on disk if the session never finishes
   (battery dies, a crash); the files below are only written on stop.
 - On stop: `vehicles.csv`, `pedestrians.csv`, `yield_events.csv`, `summary.md`, the review
   images and `yield_clips/all_did_not_yield.mp4`. Live mode doesn't write an annotated video.
@@ -196,8 +217,9 @@ crossings from before the sleep are judged and their clips saved, and the sessio
 on. `summary.md` lists the time with no video, and leaves it out of the per-hour rates.
 
 A status line every minute shows `skipped N frame(s)`. If that keeps growing, detection
-can't keep up with the camera. Use `--stride 2`, or `detection.model: models/yolo11s.pt`
-in `config.yaml`.
+can't keep up with the camera. Use the Neural Engine model above if you aren't
+already, then raise `live.stride` (it is 2: every other frame, 10 detections a second from
+the C120's 20 fps) or use `detection.model: models/yolo11s.pt` in `config.yaml`.
 
 To rehearse without the camera, play a recording back at real speed as if it were live,
 using the phone's calibration:

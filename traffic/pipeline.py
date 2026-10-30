@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from . import render
+from . import coreml, render
 from .report import ped_review_rows, ped_rows, vehicle_rows
 from .tracks import Analyzer
 
@@ -35,9 +35,16 @@ def pick_device(pref: str) -> str:
     return "cpu"
 
 
-def load_model(path: str):
+def load_model(path: str, imgsz: int = 960):
+    """A YOLO model: a .pt file (downloaded if missing), or a CoreML .mlpackage (exported if
+    missing, `imgsz` wide)."""
     from ultralytics import YOLO
     p = Path(path)
+    if p.suffix == ".mlpackage":
+        if not p.exists():
+            print(f"Exporting {p} for the Neural Engine (once, about a minute)...", flush=True)
+            coreml.export(p, imgsz)
+        return YOLO(str(p), task="detect")
     if not p.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
         # Ultralytics downloads known model names into the working directory.
@@ -55,8 +62,14 @@ class Detector:
 
     def __init__(self, cfg: dict, fps: float, stride: int):
         det = self.det = cfg["detection"]
-        self.model = load_model(det["model"])
-        self.device = pick_device(det["device"])
+        self.model = load_model(det["model"], int(det["imgsz"]))
+        if Path(det["model"]).suffix == ".mlpackage":
+            # CoreML picks the Neural Engine itself, and its input size is fixed at export.
+            self.device, self.predict_device = "coreml", "cpu"
+            self.imgsz = coreml.input_size(det["model"])
+        else:
+            self.device = self.predict_device = pick_device(det["device"])
+            self.imgsz = det["imgsz"]
         self.names = self.model.names
         want = set(det["vehicle_classes"]) | set(det["bicycle_classes"]) | set(det["person_classes"])
         self.class_ids = [i for i, n in self.names.items() if n in want]
@@ -73,7 +86,7 @@ class Detector:
     def step(self, pts: float, frame, analyzer: Analyzer) -> dict:
         """Detect, track and update `analyzer` for one frame. Returns the tracked detections by kind."""
         det = self.det
-        r = self.model.predict(frame, imgsz=det["imgsz"], conf=det["confidence"], device=self.device,
+        r = self.model.predict(frame, imgsz=self.imgsz, conf=det["confidence"], device=self.predict_device,
                                classes=self.class_ids, agnostic_nms=True, verbose=False)[0]
         d = sv.Detections.from_ultralytics(r)
         kinds = np.array([self.kind_of[c] for c in d.class_id]) if len(d) else np.array([])
@@ -97,6 +110,64 @@ class Detector:
         for tracker in self.trackers.values():
             for _ in range(tracker.max_time_lost + 2):
                 tracker.update_with_detections(sv.Detections.empty())
+
+
+class Annotator:
+    """The tracking overlay (zones, boxes, timestamp, counters) drawn on frames, as in annotated.mp4."""
+
+    def __init__(self, cfg: dict, cal: dict, start_time, shape):
+        self.cfg, self.start_time = cfg, start_time
+        self.ov = ov = cfg["output"]["overlays"]
+        self.limit = float(cfg["speed_limit_mph"])
+        self.trap_measured = bool(cal["speed_trap"].get("distance_measured"))
+        self.scene = render.SceneOverlay(cal, shape, zones=ov["zones"], gates=ov["gates"])
+        self.current: list[tuple] = []  # (box, label, color, track) from the latest detection frame
+
+    def update(self, tracked: dict, analyzer: Analyzer) -> None:
+        """Take the boxes to draw from a detection frame (Detector.step's result)."""
+        current = []
+        for box, tid in zip(tracked["vehicle"].xyxy, tracked["vehicle"].tracker_id):
+            tr = analyzer.vehicles.get(("vehicle", int(tid)))
+            if tr is None:
+                continue
+            if tr.movement in ("left_turn", "right_turn", "u_turn"):
+                color, label = render.GRAY, f"#{tr.tid} TURN"
+            elif tr.speed_mph is not None:
+                color = render.speed_color(tr.speed_mph, self.limit)
+                label = f"#{tr.tid} {tr.speed_mph:.0f} mph" + ("" if self.trap_measured else " est")
+            else:
+                color, label = render.BLUE, f"#{tr.tid} {tr.cls}"
+            current.append((box, label, color, tr))
+        for box, tid in zip(tracked["bicycle"].xyxy, tracked["bicycle"].tracker_id):
+            current.append((box, f"bike #{tid}", render.CYAN, None))
+        for box, tid in zip(tracked["person"].xyxy, tracked["person"].tracker_id):
+            tr = analyzer.people.get(int(tid))
+            label = "crossing" if tr and tr.crossed_pts is not None else None
+            current.append((box, label, render.MAGENTA, None))
+        self.current = current
+
+    def draw(self, frame, pts: float, analyzer: Analyzer) -> None:
+        """Draw the overlay on `frame` in place."""
+        ov = self.ov
+        self.scene.apply(frame)
+        for box, label, color, tr in self.current:
+            if ov.get("trails") and tr is not None and len(tr.path) > 1:
+                p = np.asarray([(x, y) for _, x, y in tr.path[-30:]], np.int32)
+                cv2.polylines(frame, [p], False, color, 2, cv2.LINE_AA)
+            render.draw_box(frame, box, color, label)
+        if ov["timestamp"]:
+            ts = self.start_time + timedelta(seconds=pts)
+            render.draw_timestamp(frame, ts.strftime("%a %b %d %Y %H:%M:%S PT"))
+        if ov["counters"]:
+            c = analyzer.counts
+            labels = list(self.cfg["direction_labels"].values())
+            lines = [f"Vehicles: {c['vehicle_total']}  ("
+                     + " / ".join(f"{l[:1].upper()}B {c[f'vehicle_{l}']}" for l in labels) + ")",
+                     f"Pedestrians crossing: {c['ped_total']}",
+                     f"Bicycles: {c['bicycle_total']}",
+                     f"Over {self.limit:g} mph: {c['over_limit']} of {c['speed_measured']}"
+                     + ("" if self.trap_measured else " (est.)")]
+            render.draw_panel(frame, lines)
 
 
 def new_analyzer(cfg: dict, cal: dict, start_time, out: Path) -> Analyzer:

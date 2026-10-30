@@ -22,7 +22,7 @@ import signal
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -30,9 +30,10 @@ from urllib.parse import quote
 import cv2
 import numpy as np
 
-from .clips import clip_name, clip_window, render_clip
+from .clips import (clip_name, clip_window, crossing_name, crossing_window, render_clip,
+                    render_crossing_clip)
 from .video import RAW_OUTPUT, RawFrames, VideoError, _require, ffprobe_json
-from .yields import YieldAnalyzer, YieldEvent
+from .yields import Crossing, YieldAnalyzer, YieldEvent
 
 USER_ENV, PASSWORD_ENV = "TAPO_USER", "TAPO_PASSWORD"
 RTSP_TIMEOUT_US = "10000000"   # give up on a silent stream after 10 s, then reconnect
@@ -305,6 +306,13 @@ class LiveSource:
         return use[0].start
 
 
+@dataclass
+class JudgedCrossing:
+    crossing: Crossing
+    events: list[YieldEvent]   # drivers judged for the first time on this crossing
+    vehicles: list             # every vehicle that could have been near it, for its clip
+
+
 class LiveYieldWatcher:
     """Judges each pedestrian crossing shortly after it ends, with the same rules as yielding.py.
 
@@ -321,7 +329,7 @@ class LiveYieldWatcher:
         self._next = 0               # index of the next pedestrian in analyzer.ped_records
         self._judged: set[int] = set()   # vehicle track ids, so each driver is judged once
 
-    def poll(self, now: float, force: bool = False) -> list[YieldEvent]:
+    def poll(self, now: float, force: bool = False) -> list[JudgedCrossing]:
         a = self.analyzer
         ready = []
         while self._next < len(a.ped_records) and (
@@ -337,34 +345,63 @@ class LiveYieldWatcher:
                 break
             if v.last_pts >= since:
                 vehicles.append(v)
-        events = []
+        judged = []
         for c in self.ya.analyze(ready, vehicles):
-            for e in c.events:
-                if e.crossing is c and e.vehicle.tid not in self._judged:
-                    self._judged.add(e.vehicle.tid)
-                    events.append(e)
-        return events
+            new = [e for e in c.events if e.crossing is c and e.vehicle.tid not in self._judged]
+            self._judged.update(e.vehicle.tid for e in new)
+            judged.append(JudgedCrossing(c, new, vehicles))
+        return judged
+
+
+@dataclass
+class _Clip:
+    clip_dir: Path
+    event: YieldEvent | None = None                    # a driver's yield event, or
+    group: list[JudgedCrossing] = field(default_factory=list)   # pedestrians crossing together
+    not_before: float = 0.0                            # time.time() to wait for, so others can join
+    started: bool = False                              # being cut, so nothing more joins it
 
 
 class ClipSaver:
-    """Cuts and renders event clips in the background, once the recording covers them."""
+    """Cuts and renders clips in the background, once the recording covers them."""
 
-    def __init__(self, source: LiveSource, clip_dir: Path, cal: dict, start_time,
-                 seconds_before: float, seconds_after: float, log=print):
-        self.source, self.clip_dir, self.cal, self.start_time = source, clip_dir, cal, start_time
+    CROSSING_SECONDS_AFTER = 3.0
+    TOGETHER_SECONDS = 2.0   # crossings this close in time share one clip...
+    HOLD_SECONDS = 10.0      # ...if judged within this long of each other
+
+    def __init__(self, source: LiveSource, cal: dict, start_time, seconds_before: float,
+                 seconds_after: float, crossing_seconds_before: float = 10.0, log=print):
+        self.source, self.cal, self.start_time = source, cal, start_time
         self.before, self.after = seconds_before, seconds_after
+        self.crossing_before = crossing_seconds_before
         self.log = log
         self.saved = 0
-        self._pending: list[YieldEvent] = []
+        self._pending: list[_Clip] = []
         self._closing = False
         self._lock = threading.Lock()
-        clip_dir.mkdir(parents=True, exist_ok=True)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def add(self, e: YieldEvent) -> None:
+    def add(self, e: YieldEvent, clip_dir: Path) -> Path:
+        """Queue the clip of one driver's yield event. Returns where it will be saved."""
+        clip_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            self._pending.append(e)
+            self._pending.append(_Clip(clip_dir, event=e))
+        return clip_dir / clip_name(self.start_time, e)
+
+    def add_crossing(self, j: JudgedCrossing, clip_dir: Path) -> None:
+        """Queue the clip of a whole pedestrian crossing. Pedestrians who cross together go in
+        one clip, named when it is saved."""
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        c, gap = j.crossing, self.TOGETHER_SECONDS
+        with self._lock:
+            for clip in self._pending:
+                if (clip.group and not clip.started and clip.clip_dir == clip_dir
+                        and any(c.wait_start <= o.crossing.exit + gap
+                                and o.crossing.wait_start <= c.exit + gap for o in clip.group)):
+                    clip.group.append(j)
+                    return
+            self._pending.append(_Clip(clip_dir, group=[j], not_before=time.time() + self.HOLD_SECONDS))
 
     def close(self) -> None:
         """Save everything still pending (call after source.stop()), then finish."""
@@ -378,22 +415,45 @@ class ClipSaver:
                 todo, closing = list(self._pending), self._closing
             if not todo and closing:
                 return
-            for e in todo:
-                if self._save(e):
+            for clip in todo:
+                if clip.not_before > time.time() and not closing:
+                    continue
+                with self._lock:
+                    clip.started = True
+                if self._save(clip):
                     with self._lock:
-                        self._pending.remove(e)
+                        self._pending.remove(clip)
+                else:
+                    with self._lock:
+                        clip.started = False
             time.sleep(1)
 
-    def _save(self, e: YieldEvent) -> bool:
+    def _save(self, clip: _Clip) -> bool:
         """Try to save one clip. False if the recording doesn't cover it yet."""
-        path = self.clip_dir / clip_name(self.start_time, e)
+        if clip.event:
+            e = clip.event
+            path = clip.clip_dir / clip_name(self.start_time, e)
+            window = clip_window(e, self.before, self.after)
+
+            def render(piece, offset):
+                render_clip(piece, path, e, self.cal["crosswalk"], self.start_time,
+                            self.before, self.after, offset=offset)
+        else:
+            crossings = [j.crossing for j in clip.group]
+            vehicles = list({id(v): v for j in clip.group for v in j.vehicles}.values())
+            before, after = self.crossing_before, self.CROSSING_SECONDS_AFTER
+            path = clip.clip_dir / crossing_name(self.start_time, crossings)
+            window = crossing_window(crossings, before, after)
+
+            def render(piece, offset):
+                render_crossing_clip(piece, path, crossings, vehicles, self.cal["crosswalk"],
+                                     self.start_time, before, after, offset=offset)
         piece = self.source.work / f"{path.stem}.mkv"
         try:
-            offset = self.source.cut(*clip_window(e, self.before, self.after), piece)
+            offset = self.source.cut(*window, piece)
             if offset is None:
                 return False
-            render_clip(piece, path, e, self.cal["crosswalk"], self.start_time,
-                        self.before, self.after, offset=offset)
+            render(piece, offset)
             self.saved += 1
             self.log(f"Saved {path}")
         except (VideoError, subprocess.CalledProcessError) as ex:

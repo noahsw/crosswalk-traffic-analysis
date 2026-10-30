@@ -37,8 +37,8 @@ sight_distance:
     notes: Hill crest about 50 ft east of the crosswalk; low sun ahead in the afternoon and evening.
 
 detection:
-  model: models/yolo11m.pt   # yolo11s.pt is ~2x faster, slightly less accurate
-  imgsz: 960                 # inference size in pixels
+  model: models/yolo11m.mlpackage   # the Neural Engine; models/yolo11m.pt for the GPU (see README)
+  imgsz: 960                 # inference size in pixels (a .mlpackage has its own, set at export)
   confidence: 0.25
   device: auto               # auto | mps | cuda | cpu
   stride: 2                  # detect on every Nth frame (2 = 15 detections/s at 30 fps)
@@ -75,6 +75,8 @@ yielding:
   clip_seconds_after: 3
   max_clips: 60
   clip_outcomes: [did_not_yield]   # add yielded / too_close_to_stop to clip those too
+  clip_every_crossing: true        # live mode: also save a clip of every pedestrian crossing
+  crossing_clip_seconds_before: 10 # ...starting this long before they're first seen waiting to cross
 
 # Live mode (live.py): a Tapo C120 or other RTSP camera instead of a recorded video.
 # The camera account's user name and password are kept in the macOS Keychain, never in this
@@ -86,7 +88,7 @@ live:
   keychain_item: tapo-camera   # Keychain item with the camera account (see the README)
   stream: stream1             # stream1 = full resolution, stream2 = low resolution
   calibration: calibration.tapo.yaml   # scene geometry drawn on the camera's own view
-  stride: 1                   # detect on every frame (the C120 sends 20 fps at 1920x1080)
+  stride: 2                   # detect on every other frame (10 a second from the C120's 20 fps)
   segment_seconds: 10         # the stream is recorded in pieces this long, to cut clips from
   keep_minutes: 10            # pieces older than this are deleted
   max_lag_seconds: 2          # if detection falls further behind than this, frames are skipped

@@ -52,6 +52,8 @@ DEFAULTS = {
         "clip_seconds_after": 3.0,
         "max_clips": 60,
         "clip_outcomes": ["did_not_yield"],
+        "clip_every_crossing": True,
+        "crossing_clip_seconds_before": 10.0,
     },
     "live": {
         "host": None,
@@ -59,7 +61,7 @@ DEFAULTS = {
         "keychain_item": "tapo-camera",
         "stream": "stream1",
         "calibration": "calibration.tapo.yaml",
-        "stride": 1,
+        "stride": 2,
         "segment_seconds": 10,
         "keep_minutes": 10,
         "max_lag_seconds": 2,
