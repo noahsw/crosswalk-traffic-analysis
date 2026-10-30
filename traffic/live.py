@@ -22,6 +22,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -129,6 +130,38 @@ def grab_frame(src: str) -> np.ndarray:
     return cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
 
 
+class SteadyClock:
+    """Even frame times from a camera's jittery timestamps.
+
+    The C120 sends a steady 20 frames a second but stamps them unevenly: runs of frames a few
+    microseconds apart, then a jump, each stamp off by up to half a second. A car takes about
+    half a second to cross the speed trap, so speeds timed from the stamps read anywhere from
+    half to several times the real speed. Instead each frame is put one frame period after the
+    last, the period measured from the last WINDOW stamps (the stream's stated frame rate can't
+    be trusted either), and the clock nudged slightly toward the stamps so it can't drift. On
+    the C120 that keeps a half-second interval within about 2.5%.
+    """
+
+    GAIN = 0.005
+    WINDOW, MIN_FRAMES = 400, 100   # frames: 20 s and 5 s at 20 fps
+    MAX_GAP = 1.0                   # seconds between stamps that means frames were lost
+
+    def __init__(self):
+        self.stamps: deque[float] = deque(maxlen=self.WINDOW)
+        self.t = 0.0
+
+    def __call__(self, pts: float) -> float:
+        if self.stamps and abs(pts - self.stamps[-1]) > self.MAX_GAP:
+            self.stamps.clear()   # a gap in the stream: start over
+        self.stamps.append(pts)
+        if len(self.stamps) < self.MIN_FRAMES:
+            self.t = pts          # not enough stamps yet to know the frame rate
+            return pts
+        self.t += (self.stamps[-1] - self.stamps[0]) / (len(self.stamps) - 1)
+        self.t += self.GAIN * (pts - self.t)
+        return self.t
+
+
 @dataclass
 class Segment:
     path: Path
@@ -191,8 +224,10 @@ class LiveSource:
             offset = None
             next_prune = 0.0
             error = ""
+            clock = SteadyClock()
             try:
                 for pts, frame in reader:
+                    pts = clock(pts)
                     if offset is None:
                         # Wall clock, not time.monotonic(): on a Mac that stops while asleep.
                         now = time.time()

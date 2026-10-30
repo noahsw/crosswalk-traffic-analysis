@@ -347,7 +347,10 @@ Both results are added to `summary.md`.
 1. **Strip audio** (ffmpeg stream copy) and read the start time from the phone's metadata.
 2. **Detect** cars, trucks, buses, motorcycles, bicycles and people with YOLO11 on every
    2nd frame, then **track** them with ByteTrack. Each frame's timing comes from its
-   own timestamp, because iPhone video has a variable frame rate.
+   own timestamp, because iPhone video has a variable frame rate. The live camera is the
+   opposite: a steady frame rate with timestamps off by up to half a second, so live frames
+   are timed one frame period apart, kept in line with the timestamps over the long run.
+   (Recordings cut from the camera keep its timestamps, so `analyze.py` misreads their speeds.)
 3. Each vehicle's **ground point** (the bottom-center of its box) is smoothed with a rolling
    median. A crossing is recorded when that point passes the count line, a gate or a trap line.
 4. A **pedestrian crossing** is a person who spends at least 0.5 s inside the crosswalk
