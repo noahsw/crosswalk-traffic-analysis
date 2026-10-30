@@ -13,8 +13,9 @@ pedestrian still had to cross, is classified as:
 - too_close_to_stop:  it reached the crosswalk less than min_seconds_to_stop after the
                       pedestrian appeared, so the driver may not have been able to stop.
 
-While a pedestrian waits at the curb, only the lane next to them counts. Once they are
-in the crosswalk, a lane counts until they have passed its half of the road.
+While a pedestrian waits at the curb, both lanes count (or, with waiting_counts_both_lanes
+off, only the lane next to them). Once they are in the crosswalk, a lane counts until they
+have passed its half of the road.
 
 Speeds near the crosswalk are approximate: they use the crosswalk's measured length as
 the image scale. They only need to tell "stopped" from "drove through".
@@ -83,6 +84,7 @@ class YieldAnalyzer:
         self.min_lead = float(y["min_seconds_to_stop"])
         self.stopped_mph = float(y["stopped_mph"])
         self.lanes = dict(y.get("lanes") or {})
+        self.waiting_both_lanes = bool(y.get("waiting_counts_both_lanes", True))
         self.direction_of = direction_of
         self.frame_w, self.frame_h = cal.get("image_size") or (1920, 1080)
 
@@ -142,10 +144,12 @@ class YieldAnalyzer:
             # At the curb: in the waiting area, or inside the crosswalk but not yet in the road.
             at_curb = (cv2.pointPolygonTest(area, (float(xy[i][0]), float(xy[i][1])), False) >= 0
                        or (inside[i] and not in_road[i]))
-            # (Allowing a gap: someone who was waiting is often hidden as they step in.)
-            if not at_curb or t[wait_i] - t[i] > 3.0 or t[first] - t[i] > 120:
+            # Up to 3 s away from it, or unseen, doesn't end the wait: someone waiting is often
+            # hidden as they step in, or misplaced while a car passing in front hides their feet.
+            if t[wait_i] - t[i] > 3.0 or t[first] - t[i] > 120:
                 break
-            wait_i = i
+            if at_curb:
+                wait_i = i
         return Crossing(ped, float(t[wait_i]), float(t[first]), float(t[last]), start_end,
                         ped.direction or "")
 
@@ -189,8 +193,8 @@ class YieldAnalyzer:
         """Does a vehicle travelling `direction` at time `when` conflict with this pedestrian?"""
         lane = self.lanes.get(direction)   # "near" or "far" half of the crosswalk
         if when < c.enter:
-            # Waiting at the curb: only the lane next to them.
-            return (lane is None or lane == c.start_end), "waiting_at_curb"
+            # Waiting at the curb: every lane, or only the one next to them.
+            return (self.waiting_both_lanes or lane is None or lane == c.start_end), "waiting_at_curb"
         p = self.ped_proj_at(c, when)
         half, buf = self.length_px / 2, 0.1 * self.length_px
         if lane is None:

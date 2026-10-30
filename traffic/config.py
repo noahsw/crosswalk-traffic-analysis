@@ -46,6 +46,7 @@ DEFAULTS = {
     "yielding": {
         "enabled": True,
         "lanes": {},
+        "waiting_counts_both_lanes": True,
         "min_seconds_to_stop": 3.0,
         "stopped_mph": 5.0,
         "waiting_area_px": 90,

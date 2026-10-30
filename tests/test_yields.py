@@ -102,7 +102,15 @@ def test_classifies_each_driver():
     assert got[1] == ("did_not_yield", "in_crosswalk")
     assert got[2][0] == "yielded"
     assert got[3][0] == "too_close_to_stop"
-    # A pedestrian waiting at the far curb only needs the far (eastbound) lane to stop.
+    # A pedestrian waiting at the far curb needs the near (westbound) lane to stop too.
+    assert got[4] == ("too_close_to_stop", "waiting_at_curb")
+
+
+def test_waiting_counts_only_the_adjacent_lane_when_set():
+    ya = analyzer()
+    ya.waiting_both_lanes = False
+    ped = ped_crossing_far_to_near(ya, 100.0)    # waits at the far curb 100-102
+    got = outcomes(ya.analyze([ped], [vehicle(ya, 4, "westbound", 0.25, passes=102.5, mph=25)]))
     assert 4 not in got
 
 
@@ -177,3 +185,13 @@ def test_stopping_then_pulling_out_in_front_is_not_a_yield():
     v.boxes = [(t, (x - 80, y - 60, x + 80, y)) for t, x, y in v.path]
     got = outcomes(ya.analyze([ped], [v]))
     assert got[10] == ("did_not_yield", "waiting_at_curb")
+
+
+def test_car_hiding_their_feet_does_not_end_the_wait():
+    ya = analyzer()
+    ped = ped_crossing_far_to_near(ya, 100.0)    # waits at the far curb 100-102
+    # At 101, a car passing in front hides their legs: the box gets shorter, so their feet seem
+    # to step back from the curb for a moment.
+    ped.path = [(t, x, y - 40) if 101.0 <= t < 101.3 else (t, x, y) for t, x, y in ped.path]
+    c = ya.crossing_for(ped)
+    assert abs(c.wait_start - 100.0) < 0.3

@@ -264,7 +264,8 @@ Its **How this compares** section puts the numbers in context with published ref
 every vehicle that reached the crosswalk while they were trying to cross is judged:
 
 - **did not yield**: drove through without slowing below 5 mph, in a lane the pedestrian
-  still had to cross. While the pedestrian waits at the curb, only the lane next to them counts.
+  still had to cross. While the pedestrian waits at the curb, both lanes count; set
+  `yielding.waiting_counts_both_lanes: false` to count only the lane next to them.
 - **yielded**: stopped or nearly stopped first. Only the first vehicle per direction counts,
   so a queue behind it doesn't inflate the rate.
 - **too close to stop**: reached the crosswalk less than 3 s after the pedestrian appeared, so

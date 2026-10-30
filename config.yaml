@@ -72,6 +72,10 @@ yielding:
   lanes:
     westbound: near
     eastbound: far
+  # While a pedestrian waits at the curb, drivers in both lanes should stop for them. false:
+  # only the lane next to them (each lane is judged as the pedestrian reaches it, as in
+  # driver-yielding studies such as TCRP Report 562).
+  waiting_counts_both_lanes: true
   min_seconds_to_stop: 3.0   # arriving sooner than this after the pedestrian appears = "too close to stop"
   stopped_mph: 5             # slowing below this before the crosswalk counts as yielding
   waiting_area_px: 90        # how far beyond each end of the crosswalk counts as waiting at the curb
