@@ -81,7 +81,7 @@ def main() -> None:
     if expected <= 0:
         sys.exit(f"--start-min {args.start_min:g} is past the end of the video "
                  f"({info.duration / 60:.1f} min)")
-    detector = Detector(cfg, info.fps, stride)
+    detector = Detector(cfg, info.fps, stride, cal)
     status(f"Model {Path(det['model']).name} on {detector.device}, detecting every {stride} frame(s)")
 
 

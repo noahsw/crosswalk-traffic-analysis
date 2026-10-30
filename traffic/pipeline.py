@@ -57,10 +57,25 @@ def load_model(path: str, imgsz: int = 960):
     return YOLO(str(p))
 
 
+def crosswalk_zoom(cal: dict, crop_w: int, crop_h: int, pad: float) -> tuple[int, int, int, int] | None:
+    """(x0, y0, x1, y1) of a crop around the crosswalk and the waiting areas at its ends, the
+    model's input size (larger if the crosswalk doesn't fit), or None if that's the whole frame."""
+    w, h = cal.get("image_size") or (1920, 1080)
+    cw = np.asarray(cal["crosswalk"], float)
+    (x0, y0), (x1, y1) = cw.min(0) - pad, cw.max(0) + pad
+    scale = max(1.0, (x1 - x0) / crop_w, (y1 - y0) / crop_h)
+    cw_, ch_ = round(crop_w * scale), round(crop_h * scale)
+    if cw_ >= w or ch_ >= h:
+        return None
+    left = int(min(max(0, (x0 + x1 - cw_) / 2), w - cw_))
+    top = int(min(max(0, (y0 + y1 - ch_) / 2), h - ch_))
+    return left, top, left + cw_, top + ch_
+
+
 class Detector:
     """YOLO detection and one ByteTrack tracker per kind of object, feeding an Analyzer."""
 
-    def __init__(self, cfg: dict, fps: float, stride: int):
+    def __init__(self, cfg: dict, fps: float, stride: int, cal: dict | None = None):
         det = self.det = cfg["detection"]
         self.model = load_model(det["model"], int(det["imgsz"]))
         if Path(det["model"]).suffix == ".mlpackage":
@@ -82,6 +97,11 @@ class Detector:
             for k in KINDS:
                 if n in det[f"{k}_classes"]:
                     self.kind_of[i] = k
+        self.person_ids = [i for i, k in self.kind_of.items() if k == "person"]
+        self.zoom = None
+        if cal is not None and det.get("crosswalk_zoom"):
+            h, w = self.imgsz if isinstance(self.imgsz, tuple) else coreml.shape_for(self.imgsz)
+            self.zoom = crosswalk_zoom(cal, w, h, float(cfg["yielding"]["waiting_area_px"]))
 
     def step(self, pts: float, frame, analyzer: Analyzer) -> dict:
         """Detect, track and update `analyzer` for one frame. Returns the tracked detections by kind."""
@@ -89,6 +109,14 @@ class Detector:
         r = self.model.predict(frame, imgsz=self.imgsz, conf=det["confidence"], device=self.predict_device,
                                classes=self.class_ids, agnostic_nms=True, verbose=False)[0]
         d = sv.Detections.from_ultralytics(r)
+        if self.zoom:
+            x0, y0, x1, y1 = self.zoom
+            r = self.model.predict(frame[y0:y1, x0:x1], imgsz=self.imgsz, conf=det["confidence"],
+                                   device=self.predict_device, classes=self.person_ids, verbose=False)[0]
+            z = sv.Detections.from_ultralytics(r)
+            if len(z):
+                z.xyxy += np.array([x0, y0, x0, y0], dtype=z.xyxy.dtype)
+                d = sv.Detections.merge([d, z]).with_nms(threshold=0.5, class_agnostic=True)
         kinds = np.array([self.kind_of[c] for c in d.class_id]) if len(d) else np.array([])
         tracked = {}
         for k, tracker in self.trackers.items():

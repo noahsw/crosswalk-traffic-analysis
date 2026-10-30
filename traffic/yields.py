@@ -5,7 +5,8 @@ For every pedestrian who actually crossed, we find when they started trying to c
 finished. Each vehicle that reached the crosswalk in that window, in a lane the
 pedestrian still had to cross, is classified as:
 
-- yielded:            it stopped or nearly stopped (< stopped_mph) before the crosswalk.
+- yielded:            it stopped or nearly stopped (< stopped_mph) before the crosswalk,
+                      and waited until the pedestrian no longer needed its lane.
                       Only the first such vehicle per direction counts, so a queue
                       behind it doesn't inflate the yield rate.
 - did_not_yield:      it drove through without slowing below stopped_mph.
@@ -74,6 +75,9 @@ def _median_smooth(values: np.ndarray, k: int = 5) -> np.ndarray:
 
 
 class YieldAnalyzer:
+    MAX_GAP = 0.3    # seconds between detections that means the vehicle was hidden
+    SETTLE_S = 0.5   # how long its smoothed position takes to catch up afterwards
+
     def __init__(self, cfg: dict, cal: dict, direction_of):
         y = cfg["yielding"]
         self.min_lead = float(y["min_seconds_to_stop"])
@@ -89,7 +93,8 @@ class YieldAnalyzer:
         self.length_px = float(np.linalg.norm(axis))
         self.axis = axis / self.length_px
         self.origin = near_mid
-        self.margin = 0.08 * self.length_px     # roughly the gutter at each end
+        # A step past the curb line at each end: someone that far out has left the curb.
+        self.margin = 0.03 * self.length_px
         # Approximate image scale near the crosswalk (pixels per foot).
         self.px_per_ft = self.length_px / float(cfg["road"]["crosswalk_length_ft"])
         # Line across the road through the middle of the crosswalk, a bit past each curb.
@@ -101,7 +106,7 @@ class YieldAnalyzer:
     @staticmethod
     def _end_area(a, b, outward, depth) -> np.ndarray:
         along = (b - a) / np.linalg.norm(b - a)
-        widen = 0.5 * np.linalg.norm(b - a)
+        widen = np.linalg.norm(b - a)   # a crosswalk's width to each side: people wait near, not on, it
         pts = [a - along * widen, b + along * widen,
                b + along * widen + outward * depth, a - along * widen + outward * depth]
         return np.asarray(pts, np.float32)
@@ -137,7 +142,8 @@ class YieldAnalyzer:
             # At the curb: in the waiting area, or inside the crosswalk but not yet in the road.
             at_curb = (cv2.pointPolygonTest(area, (float(xy[i][0]), float(xy[i][1])), False) >= 0
                        or (inside[i] and not in_road[i]))
-            if not at_curb or t[wait_i] - t[i] > 1.5 or t[first] - t[i] > 120:
+            # (Allowing a gap: someone who was waiting is often hidden as they step in.)
+            if not at_curb or t[wait_i] - t[i] > 3.0 or t[first] - t[i] > 120:
                 break
             wait_i = i
         return Crossing(ped, float(t[wait_i]), float(t[first]), float(t[last]), start_end,
@@ -161,8 +167,13 @@ class YieldAnalyzer:
         """Approximate (time, mph) over sliding `window`-second spans between t_from and t_to."""
         # A box cut off by the frame edge doesn't move with the vehicle, so skip those samples.
         clipped = {t for t, b in v.boxes if b[0] <= 3 or b[2] >= self.frame_w - 3 or b[3] >= self.frame_h - 3}
+        # Nor does the smoothed position just after the vehicle was hidden (behind a pole, say):
+        # the rolling median still holds positions from before, so it seems to stall.
+        times = [t for t, _, _ in v.path]
+        resumed = [t1 for t0, t1 in zip(times, times[1:]) if t1 - t0 > self.MAX_GAP]
+        settling = {t for t in times for r in resumed if r <= t < r + self.SETTLE_S}
         pts = [(t, x, y) for t, x, y in v.path
-               if t_from - window <= t <= t_to + 0.01 and t not in clipped]
+               if t_from - window <= t <= t_to + 0.01 and t not in clipped and t not in settling]
         out = []
         j = 0
         for i in range(len(pts)):
@@ -217,25 +228,22 @@ class YieldAnalyzer:
                 at = self.speed_mph(v, tv - 0.5, tv + 0.5)
                 if not before:
                     continue       # not tracked long enough before the crosswalk to judge
-                t_slowest, min_speed = min(before, key=lambda x: x[1])
+                min_speed = min(s for _, s in before)
                 speed = float(np.median([x[1] for x in at])) if at else None
                 lead = tv - c.wait_start
-                if min_speed < self.stopped_mph:
-                    # It stopped. Only a yield if that was while the pedestrian was trying to cross
-                    # and needed this lane.
-                    if not (c.wait_start - 0.5 <= t_slowest <= c.exit + 0.5):
-                        if tv > c.exit:
-                            continue
-                        outcome = "too_close_to_stop" if lead < self.min_lead else "did_not_yield"
-                        ok, phase = self.conflicts(c, direction, tv)
-                        if not ok:
-                            continue
-                    else:
-                        ok, phase = self.conflicts(c, direction, t_slowest)
-                        outcome = "yielded"
-                    if not ok or (outcome == "yielded" and direction in yielded_dirs):
-                        continue   # stopped for something else, or queued behind a yielding vehicle
+                # A yield if it stopped while the pedestrian was trying to cross and needed this
+                # lane, and then waited until they no longer did. (Stopping at the Havana stop sign
+                # and then pulling out in front of someone waiting to cross isn't yielding.)
+                stopped = [t for t, s in before
+                           if s < self.stopped_mph and c.wait_start - 0.5 <= t <= c.exit + 0.5]
+                t_yield = next((t for t in stopped if self.conflicts(c, direction, t)[0]), None)
+                if t_yield is not None and (tv > c.exit or not self.conflicts(c, direction, tv)[0]):
+                    if direction in yielded_dirs:
+                        continue   # queued behind a yielding vehicle
+                    outcome, phase = "yielded", self.conflicts(c, direction, t_yield)[1]
                 else:
+                    # Drove through, stopped only before the pedestrian needed its lane, or went
+                    # while they still did: judged by when it reached the crosswalk.
                     if tv > c.exit:
                         continue   # arrived after the pedestrian had finished
                     ok, phase = self.conflicts(c, direction, tv)

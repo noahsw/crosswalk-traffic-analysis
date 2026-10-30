@@ -142,7 +142,7 @@ def main() -> None:
     keep_awake()
     stop_on_sigterm()
     # Load the model before connecting, so the stream doesn't back up while it loads.
-    detector = Detector(cfg, fps, stride)
+    detector = Detector(cfg, fps, stride, cal)
     status(f"{width}x{height} at {fps:g} fps. Model {Path(cfg['detection']['model']).name} on "
            f"{detector.device}, detecting every {stride} frame(s)")
     work = args.work / "live" / out.name

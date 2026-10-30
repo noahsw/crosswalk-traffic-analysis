@@ -25,7 +25,7 @@ def export(dst: Path, imgsz: int) -> None:
     src = dst.with_suffix(".pt")
     load_model(str(src))   # downloads it if needed
     # A CoreML model's input size is fixed: the same size the .pt model resizes frames to.
-    shape = (math.ceil(imgsz / ASPECT / 32) * 32, imgsz)
+    shape = shape_for(imgsz)
     _patch_coremltools()
     cwd = os.getcwd()
     os.chdir(src.parent)   # Ultralytics writes the export into the working directory
@@ -39,6 +39,11 @@ def export(dst: Path, imgsz: int) -> None:
     if out != dst.resolve():
         shutil.rmtree(dst, ignore_errors=True)
         out.rename(dst)
+
+
+def shape_for(imgsz: int) -> tuple[int, int]:
+    """(height, width) a 16:9 frame is resized to for a model `imgsz` wide."""
+    return math.ceil(imgsz / ASPECT / 32) * 32, imgsz
 
 
 def input_size(path: str) -> tuple[int, int]:

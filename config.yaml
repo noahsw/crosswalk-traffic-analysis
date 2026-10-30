@@ -45,6 +45,10 @@ detection:
   vehicle_classes: [car, motorcycle, bus, truck]
   bicycle_classes: [bicycle]
   person_classes: [person]
+  # Also look for people in a full-resolution crop around the crosswalk. At full-frame size a
+  # person waiting at the far end of the view is only ~15x30 px and often missed. Costs a
+  # second detection per frame.
+  crosswalk_zoom: true
 
 tracking:
   lost_track_seconds: 1.5      # keep a track alive this long through occlusion

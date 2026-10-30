@@ -29,6 +29,7 @@ DEFAULTS = {
         "vehicle_classes": ["car", "motorcycle", "bus", "truck"],
         "bicycle_classes": ["bicycle"],
         "person_classes": ["person"],
+        "crosswalk_zoom": True,
     },
     "tracking": {
         "lost_track_seconds": 1.5,

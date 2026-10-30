@@ -346,7 +346,10 @@ Both results are added to `summary.md`.
 
 1. **Strip audio** (ffmpeg stream copy) and read the start time from the phone's metadata.
 2. **Detect** cars, trucks, buses, motorcycles, bicycles and people with YOLO11 on every
-   2nd frame, then **track** them with ByteTrack. Each frame's timing comes from its
+   2nd frame, then **track** them with ByteTrack. People are also looked for in a
+   full-resolution crop around the crosswalk (`detection.crosswalk_zoom`), where someone
+   waiting at the curb is otherwise too small to detect reliably. Someone who vanishes at the
+   crosswalk (behind the plants, say) and reappears within 3 s is kept as one person. Each frame's timing comes from its
    own timestamp, because iPhone video has a variable frame rate. The live camera is the
    opposite: a steady frame rate with timestamps off by up to half a second, so live frames
    are timed one frame period apart, kept in line with the timestamps over the long run.
