@@ -97,6 +97,7 @@ class PersonTrack:
         return "other"
 
 
+OPPOSITE_LEG = {"east": "west", "west": "east", "north": "south", "south": "north"}
 PED_NEAR_PX = 60  # people whose feet come this close to the crosswalk are logged for review
 
 
@@ -216,6 +217,17 @@ class Analyzer:
                 exit_, inferred = self.count_leg, True
             elif exit_ and not entry and exit_ != self.count_leg:
                 entry, inferred = self.count_leg, True
+        if tr.count_dir and (entry is None) != (exit_ is None):
+            # The count line also gives the direction of travel: westbound runs from the east
+            # leg to the west leg. If one end was seen and fits that, fill in the other (e.g. a
+            # near-lane car first seen once it's out from behind the plants).
+            to = tr.count_dir.removesuffix("bound")
+            frm = OPPOSITE_LEG.get(to)
+            if frm in self.gates and to in self.gates:
+                if exit_ == to and entry is None:
+                    entry, inferred = frm, True
+                elif entry == frm and exit_ is None:
+                    exit_, inferred = to, True
         tr.entry, tr.exit, tr.inferred = entry, exit_, inferred
         tr.movement = classify_movement(entry, exit_) if entry and exit_ and entry != exit_ else "unknown"
 
