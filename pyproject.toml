@@ -23,3 +23,9 @@ package = false
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# The replay tests (tests/test_replay.py) run real video through detection, so they're slow and
+# need clips that only exist locally. Run them with: PYTHONPATH=. uv run pytest -m replay
+markers = ["replay: replays a saved crossing's video through detection, tracking and judging"]
+addopts = "-m 'not replay'"

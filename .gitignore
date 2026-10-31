@@ -1,6 +1,8 @@
 input/
 work/
 out/
+# Raw video of real crossings for tests/test_replay.py. Never commit it: the repo is public.
+tests/replay_clips/
 models/
 .venv/
 *.MOV
