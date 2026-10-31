@@ -2,7 +2,9 @@
 
 For every pedestrian who actually crossed, we find when they started trying to cross
 (waiting at the curb at one end of the crosswalk, or stepping in) and when they
-finished. Each vehicle that reached the crosswalk in that window, in a lane the
+finished. Waiting means being in the waiting area at that end, or standing still a little
+further out (at the curb's edge, in the gutter, just beside the crosswalk): someone who stops
+there means to cross, while someone walking past there may not. Each vehicle that reached the crosswalk in that window, in a lane the
 pedestrian still had to cross, is classified as:
 
 - yielded:            it stopped or nearly stopped (< stopped_mph) before the crosswalk,
@@ -78,6 +80,8 @@ def _median_smooth(values: np.ndarray, k: int = 5) -> np.ndarray:
 class YieldAnalyzer:
     MAX_GAP = 0.3    # seconds between detections that means the vehicle was hidden
     SETTLE_S = 0.5   # how long its smoothed position takes to catch up afterwards
+    STILL_ZONE_FT = 6.0     # standing still this far into the road from a waiting area is waiting
+    STILL_FT_PER_S = 1.0    # moving slower than this, over a second, is standing still
 
     def __init__(self, cfg: dict, cal: dict, direction_of):
         y = cfg["yielding"]
@@ -104,6 +108,12 @@ class YieldAnalyzer:
         depth = float(y["waiting_area_px"])
         self.wait_near = self._end_area(cw[0], cw[1], -self.axis, depth)
         self.wait_far = self._end_area(cw[3], cw[2], self.axis, depth)
+        # The same areas reaching STILL_ZONE_FT into the road, for people standing still.
+        slack = self.STILL_ZONE_FT * self.px_per_ft
+        self.still_near = self._end_area(cw[0] + self.axis * slack, cw[1] + self.axis * slack,
+                                         -self.axis, depth + slack)
+        self.still_far = self._end_area(cw[3] - self.axis * slack, cw[2] - self.axis * slack,
+                                        self.axis, depth + slack)
 
     @staticmethod
     def _end_area(a, b, outward, depth) -> np.ndarray:
@@ -115,6 +125,15 @@ class YieldAnalyzer:
 
     def _proj(self, xy: np.ndarray) -> np.ndarray:
         return (xy - self.origin) @ self.axis
+
+    def _still(self, t: np.ndarray, xy: np.ndarray) -> np.ndarray:
+        """Whether they were standing still at each sample: over the second around it, they
+        moved slower than STILL_FT_PER_S (and were seen for at least half of it)."""
+        lo = np.searchsorted(t, t - 0.5)
+        hi = np.searchsorted(t, t + 0.5, side="right") - 1
+        span = t[hi] - t[lo]
+        moved = np.linalg.norm(xy[hi] - xy[lo], axis=1)
+        return (span >= 0.5) & (moved < self.STILL_FT_PER_S * self.px_per_ft * span)
 
     # ------------------------------------------------------------------ pedestrians
     def crossing_for(self, ped: PersonTrack) -> Crossing | None:
@@ -138,18 +157,27 @@ class YieldAnalyzer:
                 break
         start_end = "near" if proj[first] < self.length_px / 2 else "far"
         area = self.wait_near if start_end == "near" else self.wait_far
+        zone = self.still_near if start_end == "near" else self.still_far
+        still = self._still(t, xy)
         # Walk back over the samples where they were at that curb, waiting.
-        wait_i = first
+        wait_i = near_i = first
         for i in range(first - 1, -1, -1):
-            # At the curb: in the waiting area, or inside the crosswalk but not yet in the road.
-            at_curb = (cv2.pointPolygonTest(area, (float(xy[i][0]), float(xy[i][1])), False) >= 0
-                       or (inside[i] and not in_road[i]))
+            pt = (float(xy[i][0]), float(xy[i][1]))
+            in_zone = cv2.pointPolygonTest(zone, pt, False) >= 0
+            # At the curb: in the waiting area, inside the crosswalk but not yet in the road, or
+            # standing still just beyond them.
+            at_curb = (cv2.pointPolygonTest(area, pt, False) >= 0
+                       or (inside[i] and not in_road[i]) or (in_zone and still[i]))
             # Up to 3 s away from it, or unseen, doesn't end the wait: someone waiting is often
             # hidden as they step in, or misplaced while a car passing in front hides their feet.
-            if t[wait_i] - t[i] > 3.0 or t[first] - t[i] > 120:
+            # Nor does moving along just beyond it (walking along the gutter to the crosswalk),
+            # though only time at the curb counts as waiting.
+            if t[near_i] - t[i] > 3.0 or t[first] - t[i] > 120:
                 break
             if at_curb:
                 wait_i = i
+            if at_curb or in_zone:
+                near_i = i
         return Crossing(ped, float(t[wait_i]), float(t[first]), float(t[last]), start_end,
                         ped.direction or "")
 

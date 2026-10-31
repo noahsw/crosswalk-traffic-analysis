@@ -265,7 +265,11 @@ Its **How this compares** section puts the numbers in context with published ref
 **pedestrians.csv** lists one row per crossing, with its time and direction.
 
 **Driver yielding** (`yield_events.csv`, `yield_clips/`): for each pedestrian who crossed,
-every vehicle that reached the crosswalk while they were trying to cross is judged:
+every vehicle that reached the crosswalk while they were trying to cross is judged. They
+start trying to cross when they wait at the curb: in the waiting area at that end of the
+crosswalk (`yielding.waiting_area_px` deep, and a crosswalk's width to each side), or standing
+still up to 6 ft beyond it, at the curb's edge or in the gutter. Walking through there doesn't
+count, so someone walking along the road's edge who turns into the crosswalk hasn't been waiting.
 
 - **did not yield**: drove through without slowing below 5 mph, in a lane the pedestrian
   still had to cross. While the pedestrian waits at the curb, both lanes count; set

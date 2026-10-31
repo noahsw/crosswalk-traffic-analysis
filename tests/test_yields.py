@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from traffic.config import load_calibration, load_config
@@ -254,3 +255,123 @@ def test_live_judges_a_driver_against_whoever_was_waiting_first():
     events = [e for j in judged for e in j.events]
     assert [(e.vehicle.tid, e.outcome, e.crossing.ped.tid) for e in events] == \
         [(1, "did_not_yield", first.tid)]
+
+
+# Waiting means standing still near the curb, not just passing by (see crossing_for).
+
+def far_curb(ya: YieldAnalyzer, along_px: float = 0.0, into_road_ft: float = 0.0) -> np.ndarray:
+    """A spot at the far curb: `along_px` along it from the middle of the crosswalk's end (positive
+    toward the second corner), `into_road_ft` out from it into the road."""
+    cw = ya.crosswalk.astype(float)
+    along = (cw[2] - cw[3]) / np.linalg.norm(cw[2] - cw[3])
+    return (cw[2] + cw[3]) / 2 + along * along_px - ya.axis * into_road_ft * ya.px_per_ft
+
+
+def ped_walking(ya: YieldAnalyzer, legs, t0: float = 100.0, tid: int = 1) -> PersonTrack:
+    """A pedestrian following `legs`, (seconds, from, to) each, at 10 samples a second (standing
+    still when from and to are the same), then crossing from the far curb to the near one in 8 s."""
+    p = PersonTrack(tid, first_pts=t0, direction="northbound")
+    legs = list(legs) + [(8.0, far_curb(ya, 0, 1), ya.origin - ya.axis * 30)]
+    t = t0
+    for seconds, a, b in legs:
+        n = int(round(seconds * 10))
+        for k in range(n):
+            p.path.append((round(t, 3), *(a + (b - a) * k / n)))
+            t += 0.1
+    p.boxes = [(t, (x - 10, y - 60, x + 10, y)) for t, x, y in p.path]
+    p.last_pts = p.path[-1][0]
+    return p
+
+
+def width(ya: YieldAnalyzer) -> float:
+    cw = ya.crosswalk
+    return float(np.linalg.norm(cw[2] - cw[3]))
+
+
+def test_standing_still_at_the_curbs_edge_beside_the_crosswalk_is_waiting():
+    # Tonight's miss: standing just off the curb a few feet beside the crosswalk, a little past
+    # the waiting area, while two cars drove by.
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=1)
+    assert cv2.pointPolygonTest(ya.wait_far, tuple(map(float, spot)), False) < 0
+    ped = ped_walking(ya, [(8.0, spot, spot), (2.0, spot, far_curb(ya, 0, 1))])
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=104.0, mph=25)
+    (c,) = ya.analyze([ped], [car])
+    assert abs(c.wait_start - 100.0) < 0.3
+    assert outcomes([c]) == {7: ("did_not_yield", "waiting_at_curb")}
+
+
+def test_standing_still_in_the_gutter_is_waiting():
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=4)
+    ped = ped_walking(ya, [(8.0, spot, spot), (2.0, spot, far_curb(ya, 0, 1))])
+    assert abs(ya.crossing_for(ped).wait_start - 100.0) < 0.3
+
+
+def test_standing_still_well_out_in_the_road_is_not_waiting():
+    # Further out than the waiting areas reach: maybe by a parked car, not at the curb.
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=9)
+    ped = ped_walking(ya, [(8.0, spot, spot), (2.0, spot, far_curb(ya, 0, 1))])
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=104.0, mph=25)
+    (c,) = ya.analyze([ped], [car])
+    assert c.wait_start > 108.0
+    assert outcomes([c]) == {}
+
+
+def test_standing_still_far_along_the_curb_is_not_waiting():
+    # Beyond the waiting area along the sidewalk (waiting for a ride, say), then walking over.
+    ya = analyzer()
+    spot = far_curb(ya, 2.5 * width(ya), into_road_ft=1)
+    ped = ped_walking(ya, [(8.0, spot, spot), (4.0, spot, far_curb(ya, 0, 1))])
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=104.0, mph=25)
+    (c,) = ya.analyze([ped], [car])
+    assert c.wait_start > 108.0
+    assert outcomes([c]) == {}
+
+
+def test_walking_along_the_gutter_to_the_crosswalk_is_not_waiting():
+    # Someone walking along the edge of the road at 4 ft/s who turns into the crosswalk hasn't
+    # been waiting until they reach its end: a car passing them on the way doesn't count.
+    ya = analyzer()
+    start = far_curb(ya, 2.5 * width(ya), into_road_ft=1)
+    walk = 2.5 * width(ya) / (4 * ya.px_per_ft)
+    ped = ped_walking(ya, [(walk, start, far_curb(ya, 0, 1))])
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=100.0 + walk - 4.0, mph=25)   # passes them
+    (c,) = ya.analyze([ped], [car])
+    assert c.wait_s < 2.5     # from reaching the crosswalk's end (half its width + 10 px away)
+    assert outcomes([c]) == {}
+
+
+def test_walking_to_the_crosswalk_after_waiting_beside_it_keeps_the_wait():
+    # Waiting beside the crosswalk, then walking slowly (2 ft/s, with a child) along the gutter
+    # to it: more than 3 s away from the waiting area, but the wait goes on.
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=1)
+    walk = width(ya) / (2 * ya.px_per_ft)
+    assert walk > 3.0
+    ped = ped_walking(ya, [(8.0, spot, spot), (walk, spot, far_curb(ya, 0, 1))])
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=104.0, mph=25)
+    (c,) = ya.analyze([ped], [car])
+    assert abs(c.wait_start - 100.0) < 0.3
+    assert outcomes([c]) == {7: ("did_not_yield", "waiting_at_curb")}
+
+
+def test_shifting_about_while_standing_is_still_standing():
+    # Detection boxes jitter by a few pixels from frame to frame, and people shift their weight.
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=1)
+    ped = ped_walking(ya, [(8.0, spot, spot), (2.0, spot, far_curb(ya, 0, 1))])
+    rng = np.random.default_rng(0)
+    ped.path = [(t, x + rng.uniform(-4, 4), y + rng.uniform(-4, 4)) if t < 108 else (t, x, y)
+                for t, x, y in ped.path]
+    assert abs(ya.crossing_for(ped).wait_start - 100.0) < 0.3
+
+
+def test_standing_by_the_crosswalk_without_crossing_is_not_a_crossing():
+    ya = analyzer()
+    spot = far_curb(ya, width(ya), into_road_ft=1)
+    p = PersonTrack(1, first_pts=100.0)
+    p.path = [(100.0 + k / 10, *spot) for k in range(300)]
+    p.path += [(130.0 + k / 10, *(spot + (far_curb(ya, 3 * width(ya)) - spot) * k / 50)) for k in range(50)]
+    assert ya.crossing_for(p) is None
