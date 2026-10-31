@@ -134,6 +134,20 @@ def crossing_window(crossings, seconds_before: float, seconds_after: float) -> t
     return max(0.0, start - seconds_before), end + seconds_after
 
 
+def copy_window(video: Path, out_path: Path, window: tuple[float, float], offset: float = 0.0) -> None:
+    """The video from `window` (on the tracks' timeline) as it was recorded: no boxes or
+    captions, and not re-encoded, so it can be run through detection again (see
+    tests/test_replay.py). It starts at the keyframe at or before the window's start.
+    `offset`: see _frames."""
+    t0, t1 = window
+    start = max(0.0, t0 - offset)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-y", "-ss", f"{start:.3f}", "-i", str(video),
+                    "-t", f"{t1 - t0:.3f}", "-map", "0:v:0", "-c", "copy", "-an", "-sn", "-dn",
+                    "-movflags", "+faststart", str(out_path)], check=True)
+    assert_no_audio(out_path)
+
+
 def render_crossing_clip(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_time,
                          seconds_before: float, seconds_after: float, offset: float = 0.0,
                          times: list[float] | None = None) -> None:
