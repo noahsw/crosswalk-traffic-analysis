@@ -276,7 +276,7 @@ every vehicle that reached the crosswalk while they were trying to cross is judg
 
 Every pedestrian a driver didn't yield to gets one clip in `yield_clips/` (in
 `out/did_not_yield/` for live sessions), from a few seconds before the first such driver reaches
-the crosswalk until just after the last, with each of them boxed in red, the pedestrian
+the crosswalk until the last has passed and the pedestrian is across, with each of them boxed in red, the pedestrian
 highlighted, the time and a caption. All of them are joined in `yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
 automatic, and plants hide part of the near (north) end of the crosswalk. The numbers are in
 the "Drivers yielding to pedestrians" section of `summary.md`, and `pedestrians.csv` gains each

@@ -218,4 +218,16 @@ def test_one_clip_per_pedestrian():
     assert clip_name(datetime(2026, 10, 30, 14, 0), groups[0]) == \
         "20261030_140143_did_not_yield_eastbound+westbound_V1+V2.mp4"
     t0, t1 = clip_window(groups[0], 6.0, 3.0)
-    assert t0 <= 103.5 - 4 and t1 == 105.0 + 3
+    assert t0 <= 103.5 - 4 and t1 == groups[0][0].crossing.exit + 3 > 105.0 + 3   # once they're across
+
+
+def test_clip_runs_until_the_pedestrian_is_across():
+    from traffic.clips import clip_window
+    ya = analyzer()
+    ped = ped_crossing_near_to_far(ya, 100.0)    # waits 100-104, crosses 104-112
+    v = vehicle(ya, 1, "westbound", 0.25, passes=103.5, mph=25)   # passes while they wait
+    (c,) = ya.analyze([ped], [v])
+    (e,) = c.events
+    assert (e.outcome, e.phase) == ("did_not_yield", "waiting_at_curb")
+    t0, t1 = clip_window([e], 6.0, 3.0)
+    assert t0 < e.passes and t1 == c.exit + 3.0 > e.passes + 3.0

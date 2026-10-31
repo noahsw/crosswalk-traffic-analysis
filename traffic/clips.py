@@ -64,11 +64,13 @@ def clip_name(start_time, events: list[YieldEvent]) -> str:
 def clip_window(events: list[YieldEvent], seconds_before: float,
                 seconds_after: float) -> tuple[float, float]:
     """(start, end) of a clip of drivers passing one pedestrian, in seconds on the tracks'
-    timeline: from a little before the first reaches the crosswalk until just after the last."""
+    timeline: from a little before the first reaches the crosswalk until just after the last has
+    and the pedestrians have made it across."""
     first = min(events, key=lambda e: e.passes)
     t0 = max(0.0, min(first.passes - 4.0, max(first.crossing.wait_start - 1.0,
                                               first.passes - seconds_before)))
-    return t0, max(e.passes for e in events) + seconds_after
+    end = max([e.passes for e in events] + [c.exit for e in events for c in e.crossings])
+    return t0, end + seconds_after
 
 
 def _frames(video: Path, t0: float, t1: float, offset: float, times: list[float] | None):
