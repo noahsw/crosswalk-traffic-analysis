@@ -174,7 +174,7 @@ def _render(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_t
         for c in crossings:
             pb = box_at(c.ped.boxes, pts)
             if pb is not None:
-                render.draw_box(frame, pb, render.MAGENTA, "pedestrian", thickness=3)
+                render.draw_box(frame, pb, render.MAGENTA, f"P{c.ped.tid}", thickness=3)
         ts = start_time + timedelta(seconds=pts)
         render.draw_timestamp(frame, ts.strftime("%a %b %d %Y %H:%M:%S PT"))
         render.put_label(frame, caption, (12, frame.shape[0] - 14), render.WHITE, scale=1.0,
