@@ -37,14 +37,18 @@ sight_distance:
     notes: Hill crest about 50 ft east of the crosswalk; low sun ahead in the afternoon and evening.
 
 detection:
-  model: models/yolo11m.pt   # yolo11s.pt is ~2x faster, slightly less accurate
-  imgsz: 960                 # inference size in pixels
+  model: models/yolo11m.mlpackage   # the Neural Engine; models/yolo11m.pt for the GPU (see README)
+  imgsz: 960                 # inference size in pixels (a .mlpackage has its own, set at export)
   confidence: 0.25
   device: auto               # auto | mps | cuda | cpu
   stride: 2                  # detect on every Nth frame (2 = 15 detections/s at 30 fps)
   vehicle_classes: [car, motorcycle, bus, truck]
   bicycle_classes: [bicycle]
   person_classes: [person]
+  # Also look for people in a full-resolution crop around the crosswalk. At full-frame size a
+  # person waiting at the far end of the view is only ~15x30 px and often missed. Costs a
+  # second detection per frame.
+  crosswalk_zoom: true
 
 tracking:
   lost_track_seconds: 1.5      # keep a track alive this long through occlusion
@@ -68,6 +72,10 @@ yielding:
   lanes:
     westbound: near
     eastbound: far
+  # While a pedestrian waits at the curb, drivers in both lanes should stop for them. false:
+  # only the lane next to them (each lane is judged as the pedestrian reaches it, as in
+  # driver-yielding studies such as TCRP Report 562).
+  waiting_counts_both_lanes: true
   min_seconds_to_stop: 3.0   # arriving sooner than this after the pedestrian appears = "too close to stop"
   stopped_mph: 5             # slowing below this before the crosswalk counts as yielding
   waiting_area_px: 90        # how far beyond each end of the crosswalk counts as waiting at the curb
@@ -75,6 +83,23 @@ yielding:
   clip_seconds_after: 3
   max_clips: 60
   clip_outcomes: [did_not_yield]   # add yielded / too_close_to_stop to clip those too
+  clip_every_crossing: true        # live mode: also save a clip of every pedestrian crossing
+  crossing_clip_seconds_before: 10 # ...starting this long before they're first seen waiting to cross
+
+# Live mode (live.py): a Tapo C120 or other RTSP camera instead of a recorded video.
+# The camera account's user name and password are kept in the macOS Keychain, never in this
+# file (see the README).
+
+live:
+  host: 192.168.86.90                  # the camera's IP address on your network, e.g. 192.168.1.50
+  port: 554
+  keychain_item: tapo-camera   # Keychain item with the camera account (see the README)
+  stream: stream1             # stream1 = full resolution, stream2 = low resolution
+  calibration: calibration.tapo.yaml   # scene geometry drawn on the camera's own view
+  stride: 2                   # detect on every other frame (10 a second from the C120's 20 fps)
+  segment_seconds: 10         # the stream is recorded in pieces this long, to cut clips from
+  keep_minutes: 10            # pieces older than this are deleted
+  max_lag_seconds: 2          # if detection falls further behind than this, frames are skipped
 
 output:
   video: true

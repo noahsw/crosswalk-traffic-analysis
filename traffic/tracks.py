@@ -97,6 +97,7 @@ class PersonTrack:
         return "other"
 
 
+OPPOSITE_LEG = {"east": "west", "west": "east", "north": "south", "south": "north"}
 PED_NEAR_PX = 60  # people whose feet come this close to the crosswalk are logged for review
 
 
@@ -132,6 +133,7 @@ class Analyzer:
 
         self.vehicles: dict[tuple[str, int], VehicleTrack] = {}
         self.people: dict[int, PersonTrack] = {}
+        self.ped_alias: dict[int, int] = {}   # track id -> the earlier id of the same person
         self.vehicle_records: list[VehicleTrack] = []
         self.ped_records: list[PersonTrack] = []
         self.ped_reviewed: list[tuple[PersonTrack, str]] = []   # everyone who came near
@@ -216,6 +218,17 @@ class Analyzer:
                 exit_, inferred = self.count_leg, True
             elif exit_ and not entry and exit_ != self.count_leg:
                 entry, inferred = self.count_leg, True
+        if tr.count_dir and (entry is None) != (exit_ is None):
+            # The count line also gives the direction of travel: westbound runs from the east
+            # leg to the west leg. If one end was seen and fits that, fill in the other (e.g. a
+            # near-lane car first seen once it's out from behind the plants).
+            to = tr.count_dir.removesuffix("bound")
+            frm = OPPOSITE_LEG.get(to)
+            if frm in self.gates and to in self.gates:
+                if exit_ == to and entry is None:
+                    entry, inferred = frm, True
+                elif entry == frm and exit_ is None:
+                    exit_, inferred = to, True
         tr.entry, tr.exit, tr.inferred = entry, exit_, inferred
         tr.movement = classify_movement(entry, exit_) if entry and exit_ and entry != exit_ else "unknown"
 
@@ -254,14 +267,21 @@ class Analyzer:
         for box, tid in zip(boxes, ids):
             if any(containment(box, vb) >= max_contain for vb in vehicle_boxes):
                 continue  # a driver or passenger seen through a window
-            tr = self.people.get(int(tid))
+            foot = _ground_point(box)
+            tid = self.ped_alias.get(int(tid), int(tid))
+            tr = self.people.get(tid)
             if tr is None:
-                tr = self.people[int(tid)] = PersonTrack(int(tid), first_pts=pts)
+                tr = self._rejoin(pts, foot)
+                if tr is not None:
+                    self.ped_alias[tid] = tr.tid
+                else:
+                    tr = self.people[tid] = PersonTrack(tid, first_pts=pts)
+            if tr.path and tr.path[-1][0] == pts:
+                continue  # already updated this frame (under its other id)
             tr.last_pts = pts
             tr.samples += 1
             if any(iou(box, rb) > 0.1 for rb in rider_boxes):
                 tr.rider_samples += 1
-            foot = _ground_point(box)
             tr.path.append((pts, foot[0], foot[1]))
             tr.boxes.append((pts, tuple(float(v) for v in box)))
             signed = cv2.pointPolygonTest(self.crosswalk.astype(np.float32),
@@ -290,6 +310,26 @@ class Analyzer:
                 tr.direction = self.cw_labels.get(key, key)
                 self.counts["ped_total"] += 1
                 self.counts[f"ped_{tr.direction}"] += 1
+
+    def _rejoin(self, pts: float, foot) -> PersonTrack | None:
+        """The person a new track at the crosswalk continues, if any: someone last seen at the
+        crosswalk moments ago, nearby. People vanish behind the plants at the near end as they
+        step in, and come back out under a new track id."""
+        reach = 1.5 * float(self.cfg["yielding"]["waiting_area_px"])   # about where people wait
+
+        def near(xy) -> bool:
+            return cv2.pointPolygonTest(self.crosswalk.astype(np.float32),
+                                        (float(xy[0]), float(xy[1])), True) >= -reach
+        if not near(foot):
+            return None
+        best, best_d = None, self.cw_axis_len
+        for tr in self.people.values():
+            if tr.last_pts >= pts or not tr.path or not near(tr.path[-1][1:]):
+                continue   # still being tracked, or last seen away from the crosswalk
+            d = float(np.hypot(foot[0] - tr.path[-1][1], foot[1] - tr.path[-1][2]))
+            if d < best_d:
+                best, best_d = tr, d
+        return best
 
     # ---------------------------------------------------------------- lifecycle
     def finalize_stale(self, pts: float, force: bool = False) -> None:

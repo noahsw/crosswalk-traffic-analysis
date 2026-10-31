@@ -2,6 +2,7 @@
 
     uv run python calibrate.py input/VIDEO.MOV
     uv run python calibrate.py input/VIDEO.MOV --preview-only
+    uv run python calibrate.py --camera          # a frame from the live camera (see live.py)
 
 Each step shows the current shape (if any) from calibration.yaml.
   click      add a point
@@ -22,8 +23,9 @@ import numpy as np
 import yaml
 
 from traffic import render
-from traffic.config import save_calibration
-from traffic.video import read_frame_at, strip_audio
+from traffic.config import load_config, save_calibration
+from traffic.live import camera_url, grab_frame
+from traffic.video import VideoError, read_frame_at, strip_audio
 
 STEPS = [
     # (key path, points, instructions)
@@ -93,8 +95,13 @@ def ask(prompt: str, default):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("video", type=Path)
-    ap.add_argument("--calibration", type=Path, default=Path("calibration.yaml"))
+    ap.add_argument("video", nargs="?", help="video file, or an rtsp:// camera URL")
+    ap.add_argument("--camera", action="store_true",
+                    help="use a frame from the live camera at live.host in config.yaml")
+    ap.add_argument("--host", help="camera IP address (overrides live.host)")
+    ap.add_argument("--config", type=Path, default=Path("config.yaml"))
+    ap.add_argument("--calibration", type=Path, default=None,
+                    help="default calibration.yaml, or live.calibration in config.yaml for a camera")
     ap.add_argument("--time", type=float, default=None, help="seconds into the video for the reference frame")
     ap.add_argument("--gates", default=None,
                     help="comma-separated compass names of the intersection legs "
@@ -103,11 +110,22 @@ def main() -> None:
     ap.add_argument("--work", type=Path, default=Path("work"))
     args = ap.parse_args()
 
+    live = args.camera or bool(args.video and args.video.startswith("rtsp://"))
+    if not live and not args.video:
+        ap.error("give a video file, or --camera")
+    if args.calibration is None:
+        args.calibration = Path(load_config(args.config)["live"]["calibration"] if live else "calibration.yaml")
     cal = yaml.safe_load(args.calibration.read_text()) if args.calibration.exists() else {}
     t = args.time if args.time is not None else cal.get("reference_frame_seconds", 5)
-    video = strip_audio(args.video, args.work / f"{args.video.stem}.noaudio.mov")
-    frame = read_frame_at(video, t)
-    preview_path = args.calibration.with_name("calibration_preview.jpg")
+    if live:
+        try:
+            frame = grab_frame(args.video or camera_url(load_config(args.config)["live"], args.host))
+        except VideoError as ex:
+            raise SystemExit(str(ex))
+    else:
+        video = Path(args.video)
+        frame = read_frame_at(strip_audio(video, args.work / f"{video.stem}.noaudio.mov"), t)
+    preview_path = args.calibration.with_name(f"{args.calibration.stem}_preview.jpg")
 
     if not args.preview_only:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -134,7 +152,8 @@ def main() -> None:
         cal["site_name"] = ask("Site name for report titles", cal.get("site_name") or "crosswalk")
         cal["created"] = date.today().isoformat()
         cal["image_size"] = [frame.shape[1], frame.shape[0]]
-        cal["reference_frame_seconds"] = t
+        if not live:
+            cal["reference_frame_seconds"] = t
         save_calibration(cal, args.calibration)
         print(f"Saved {args.calibration}")
 

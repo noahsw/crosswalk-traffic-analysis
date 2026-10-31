@@ -24,6 +24,14 @@
 ## Features
 
 - [x] Driver yielding: `yield_events.csv`, `yield_clips/`, and a summary section.
+- [x] Live mode from a Tapo C120 (`live.py`), saving each did-not-yield clip as it happens.
+- [x] Try `live.py` on the real camera (2026-10-29: 14 minutes, plus a forced 90 s outage).
+- [ ] Trim or move the banana plant in the front planter, or move the camera: from the C120's
+      spot it hides the north curb and the near third of the crosswalk, so people waiting on the
+      north side aren't seen until they are partway across.
+- [ ] Check live speeds with a drive-by at a known speed (`calibration.tapo.yaml`'s speed trap is
+      placed from the image, and the white wall hides the near lane's wheels).
+- [ ] Multi-day live sessions: start a new report each day instead of one at the end.
 - [ ] Watch every yield clip from the full hour and note any misjudged ones; tune
       `yielding` settings if needed (`yielding.py` re-runs in seconds).
 - [ ] Re-apply gate / count-line edits from the saved `tracks.pkl` instead of re-running detection.

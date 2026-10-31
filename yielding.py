@@ -6,6 +6,9 @@ in config.yaml, without re-processing the video:
 
     uv run python yielding.py out/VIDEO
     uv run python yielding.py out/VIDEO --no-clips
+
+For a live session (live.py) there is no video to cut new clips from, so this keeps the clips
+saved during the session and links them in yield_events.csv.
 """
 
 from __future__ import annotations
@@ -13,12 +16,11 @@ from __future__ import annotations
 import argparse
 import pickle
 import shutil
-from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
 
-from traffic.clips import concat, render_clip
+from traffic.clips import clip_name, concat, live_clip_dir, render_clip
 from traffic.config import load_calibration, load_config
 from traffic.report import local, write_summary
 from traffic.tracks import Analyzer
@@ -40,24 +42,34 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
     y = cfg["yielding"]
 
     clip_dir = out / "yield_clips"
-    shutil.rmtree(clip_dir, ignore_errors=True)
-    if make_clips:
-        wanted = set(y.get("clip_outcomes") or ["did_not_yield"])
+    wanted = set(y.get("clip_outcomes") or ["did_not_yield"])
+    joined = clip_dir / "all_did_not_yield.mp4"
+    if not data.get("video"):
+        # A live session: there is no video to cut from, but its clips were saved as they
+        # happened, into the folder all live sessions share.
+        joined = out / "all_did_not_yield.mp4"
+        for e in events:
+            path = live_clip_dir(out, e.outcome) / clip_name(start_time, e)
+            if path.exists():
+                e.clip = f"../{path.parent.name}/{path.name}"
+    else:
+        shutil.rmtree(clip_dir, ignore_errors=True)
+    if make_clips and data.get("video"):
         misses = sorted((e for e in events if e.outcome in wanted), key=lambda e: e.passes)
         misses = misses[:int(y["max_clips"])]
         if misses:
             clip_dir.mkdir()
             log(f"Rendering {len(misses)} clip(s): {', '.join(sorted(wanted))}...")
         for i, e in enumerate(misses, 1):
-            ts = start_time + timedelta(seconds=e.passes)
-            path = clip_dir / f"{ts:%H%M%S}_{e.outcome}_{e.direction}_V{e.vehicle.tid}.mp4"
+            path = clip_dir / clip_name(start_time, e)
             render_clip(Path(data["video"]), path, e, cal["crosswalk"], start_time,
                         float(y["clip_seconds_before"]), float(y["clip_seconds_after"]))
             e.clip = f"yield_clips/{path.name}"
             log(f"  {i}/{len(misses)} {path.name}")
-        not_yield = [e for e in misses if e.outcome == "did_not_yield"]
-        if not_yield:
-            concat([out / e.clip for e in not_yield], clip_dir / "all_did_not_yield.mp4")
+    not_yield = sorted((e for e in events if e.clip and e.outcome == "did_not_yield"),
+                       key=lambda e: e.passes)
+    if not_yield:
+        concat([out / e.clip for e in not_yield], joined)
 
     rows = [{
         "pedestrian": "+".join(f"P{c.ped.tid}" for c in e.crossings),

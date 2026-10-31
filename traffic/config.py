@@ -29,6 +29,7 @@ DEFAULTS = {
         "vehicle_classes": ["car", "motorcycle", "bus", "truck"],
         "bicycle_classes": ["bicycle"],
         "person_classes": ["person"],
+        "crosswalk_zoom": True,
     },
     "tracking": {
         "lost_track_seconds": 1.5,
@@ -45,6 +46,7 @@ DEFAULTS = {
     "yielding": {
         "enabled": True,
         "lanes": {},
+        "waiting_counts_both_lanes": True,
         "min_seconds_to_stop": 3.0,
         "stopped_mph": 5.0,
         "waiting_area_px": 90,
@@ -52,6 +54,19 @@ DEFAULTS = {
         "clip_seconds_after": 3.0,
         "max_clips": 60,
         "clip_outcomes": ["did_not_yield"],
+        "clip_every_crossing": True,
+        "crossing_clip_seconds_before": 10.0,
+    },
+    "live": {
+        "host": None,
+        "port": 554,
+        "keychain_item": "tapo-camera",
+        "stream": "stream1",
+        "calibration": "calibration.tapo.yaml",
+        "stride": 2,
+        "segment_seconds": 10,
+        "keep_minutes": 10,
+        "max_lag_seconds": 2,
     },
     "output": {
         "video": True,
