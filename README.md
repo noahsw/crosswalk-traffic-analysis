@@ -202,6 +202,10 @@ their own shared folders, e.g. `out/yielded/`.) Everything else goes to `out/liv
   clip. The file name has the time, direction, pedestrian ids and driver outcomes, e.g.
   `20261029_150726_northbound_P260_2yielded.mp4`. Turn them off with
   `yielding.clip_every_crossing: false`.
+- `raw_crossings/`: the same stretch of video as each crossing clip, with the same name, but as
+  the camera recorded it: no boxes or captions, not re-encoded. It's for replaying a crossing
+  through detection again (see **Replaying saved crossings** below). These show real people,
+  so like everything in `out/` they're never committed.
 - `yield_log.csv`: one row per pedestrian crossing and per judged driver, added as soon as
   they are judged, with the driver clip's file name. Clips and this log are already on disk if the session never finishes
   (battery dies, a crash); the files below are only written on stop.
@@ -234,6 +238,29 @@ uv run python live.py input/VIDEO.MOV --calibration calibration.yaml
 
 The `yielding` settings in `config.yaml` apply to both modes. `waiting_area_px` is in image
 pixels, so it may need adjusting for the camera's view.
+
+### Replaying saved crossings
+
+A test scenario (`tests/scenarios/`) checks the yielding rules on a crossing's saved tracks,
+but not the detection and tracking that made them. To check those too, give the scenario its
+crossing's raw video: copy it from the session's `raw_crossings/` to `tests/replay_clips/`,
+named after the scenario:
+
+```bash
+mkdir -p tests/replay_clips
+cp out/live_DATE_TIME/raw_crossings/CROSSING.mp4 tests/replay_clips/SCENARIO_NAME.mp4
+PYTHONPATH=. uv run pytest -m replay
+```
+
+Each scenario with a clip is played through `live.py` in real time, as if it were the camera,
+and the drivers judged (both on the fly and from the finished tracks) are compared with the
+scenario's expected results. Track ids differ in a replay, so each expected pedestrian is
+matched to a replayed crossing in the same direction (the closest wait, for people crossing
+together), and drivers by direction, outcome and whether the pedestrian was waiting or in the
+crosswalk. Scenarios without a clip are skipped, and the
+plain `pytest` run skips the replay entirely: it takes about as long as the clips, plus loading
+the model. `tests/replay_clips/` is gitignored and must stay that way: the repo is public and
+the clips show real people.
 
 ## Reading the outputs
 

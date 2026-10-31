@@ -11,8 +11,9 @@ The camera account comes from the macOS Keychain (see the README), or from the T
 TAPO_PASSWORD environment variables if both are set.
 Press Ctrl+C to stop. Clips of drivers not yielding (one per pedestrian, with every driver who
 didn't yield to them) are saved to out/did_not_yield/ (one folder for every session), and of
-each crossing to out/live_<date>_<time>/crossing_clips/, as they happen (about 20 s after each crossing). Each crossing and judged driver is added to
-yield_log.csv right away.
+each crossing to out/live_<date>_<time>/crossing_clips/, as they happen (about 20 s after each crossing). Each crossing's video is also kept as recorded, with no
+boxes or captions, in raw_crossings/ beside it, to replay later (tests/test_replay.py).
+Each crossing and judged driver is added to yield_log.csv right away.
 On stop, the usual CSVs and summary.md are written for the whole session.
 
 While it runs, the Mac is kept from sleeping on its own (closing the lid still sleeps it). After
@@ -191,7 +192,7 @@ def main() -> None:
             when = start_time + timedelta(seconds=c.wait_start)
             status(f"{when:%H:%M:%S} {crossing_caption([c])}")
             if saver and every_crossing:
-                saver.add_crossing(j, out / "crossing_clips")
+                saver.add_crossing(j, out / "crossing_clips", raw_dir=out / "raw_crossings")
             log_row(when, "pedestrian_crossing", c.direction, "", None, crossing_caption([c]))
             for e in j.events:
                 outcomes[e.outcome] += 1

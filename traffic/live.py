@@ -31,8 +31,8 @@ from urllib.parse import quote
 import cv2
 import numpy as np
 
-from .clips import (clip_name, clip_window, crossing_name, crossing_window, render_clip,
-                    render_crossing_clip)
+from .clips import (clip_name, clip_window, copy_window, crossing_name, crossing_window,
+                    render_clip, render_crossing_clip)
 from .video import RAW_OUTPUT, RawFrames, VideoError, _require, ffprobe_json, packet_times
 from .tracks import PED_NEAR_PX
 from .yields import Crossing, YieldAnalyzer, YieldEvent
@@ -442,6 +442,7 @@ class _Clip:
     events: list[YieldEvent] = field(default_factory=list)   # drivers passing one pedestrian, or
     group: list[JudgedCrossing] = field(default_factory=list)   # pedestrians crossing together
     vehicles: list = field(default_factory=list)       # for `events`: every vehicle near them
+    raw_dir: Path | None = None                        # for `group`: also keep the video as recorded
     not_before: float = 0.0                            # time.time() to wait for, so others can join
     started: bool = False                              # being cut, so nothing more joins it
 
@@ -474,9 +475,10 @@ class ClipSaver:
             self._pending.append(_Clip(clip_dir, events=events, vehicles=vehicles))
         return clip_dir / clip_name(self.start_time, events)
 
-    def add_crossing(self, j: JudgedCrossing, clip_dir: Path) -> None:
+    def add_crossing(self, j: JudgedCrossing, clip_dir: Path, raw_dir: Path | None = None) -> None:
         """Queue the clip of a whole pedestrian crossing. Pedestrians who cross together go in
-        one clip, named when it is saved."""
+        one clip, named when it is saved. With `raw_dir`, the same stretch of video is also saved
+        there as recorded, without boxes or captions, under the same name."""
         clip_dir.mkdir(parents=True, exist_ok=True)
         c, gap = j.crossing, self.TOGETHER_SECONDS
         with self._lock:
@@ -486,7 +488,8 @@ class ClipSaver:
                                 and o.crossing.wait_start <= c.exit + gap for o in clip.group)):
                     clip.group.append(j)
                     return
-            self._pending.append(_Clip(clip_dir, group=[j], not_before=time.time() + self.HOLD_SECONDS))
+            self._pending.append(_Clip(clip_dir, group=[j], raw_dir=raw_dir,
+                                       not_before=time.time() + self.HOLD_SECONDS))
 
     def close(self) -> None:
         """Save everything still pending (call after source.stop()), then finish."""
@@ -538,6 +541,8 @@ class ClipSaver:
             offset = self.source.cut(*window, piece)
             if offset is None:
                 return False
+            if clip.raw_dir:
+                copy_window(piece, clip.raw_dir / path.name, window, offset)
             times = self.source.frame_times(piece, offset)
             if times is None:
                 self.log(f"{path.name}: couldn't match its frames to the tracks' times, so its "
