@@ -195,3 +195,27 @@ def test_car_hiding_their_feet_does_not_end_the_wait():
     ped.path = [(t, x, y - 40) if 101.0 <= t < 101.3 else (t, x, y) for t, x, y in ped.path]
     c = ya.crossing_for(ped)
     assert abs(c.wait_start - 100.0) < 0.3
+
+
+def test_one_clip_per_pedestrian():
+    from datetime import datetime
+
+    from traffic.clips import by_pedestrian, clip_name, clip_window
+
+    ya = analyzer()
+    first = ped_crossing_far_to_near(ya, 100.0)     # waits 100-102, crosses 102-110
+    later = ped_crossing_near_to_far(ya, 200.0)
+    later.tid = 3
+    vs = [
+        vehicle(ya, 1, "eastbound", 0.75, passes=103.5, mph=22),
+        vehicle(ya, 2, "westbound", 0.25, passes=105.0, mph=20),
+        vehicle(ya, 5, "westbound", 0.25, passes=205.0, mph=20),
+    ]
+    events = [e for c in ya.analyze([first, later], vs) for e in c.events
+              if e.outcome == "did_not_yield"]
+    groups = by_pedestrian(events)
+    assert [[e.vehicle.tid for e in g] for g in groups] == [[1, 2], [5]]
+    assert clip_name(datetime(2026, 10, 30, 14, 0), groups[0]) == \
+        "20261030_140143_did_not_yield_eastbound+westbound_V1+V2.mp4"
+    t0, t1 = clip_window(groups[0], 6.0, 3.0)
+    assert t0 <= 103.5 - 4 and t1 == 105.0 + 3

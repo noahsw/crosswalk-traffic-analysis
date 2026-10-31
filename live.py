@@ -1,5 +1,5 @@
-"""Watch a live camera (e.g. a Tapo C120) and save a clip of every driver who doesn't yield,
-and of every pedestrian crossing.
+"""Watch a live camera (e.g. a Tapo C120) and save a clip of the drivers who don't yield to each
+pedestrian, and of every pedestrian crossing.
 
     uv run python live.py                         # the camera at live.host in config.yaml
     uv run python live.py --host 192.168.1.50
@@ -9,9 +9,9 @@ and of every pedestrian crossing.
 
 The camera account comes from the macOS Keychain (see the README), or from the TAPO_USER and
 TAPO_PASSWORD environment variables if both are set.
-Press Ctrl+C to stop. Clips of drivers not yielding are saved to out/did_not_yield/ (one folder
-for every session), and of each crossing to out/live_<date>_<time>/crossing_clips/, as they
-happen (about 20 s after each crossing). Each crossing and judged driver is added to
+Press Ctrl+C to stop. Clips of drivers not yielding (one per pedestrian, with every driver who
+didn't yield to them) are saved to out/did_not_yield/ (one folder for every session), and of
+each crossing to out/live_<date>_<time>/crossing_clips/, as they happen (about 20 s after each crossing). Each crossing and judged driver is added to
 yield_log.csv right away.
 On stop, the usual CSVs and summary.md are written for the whole session.
 
@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import cv2
 
-from traffic.clips import caption_for, crossing_caption, live_clip_dir
+from traffic.clips import by_pedestrian, caption_for, crossing_caption, live_clip_dir
 from traffic.config import load_calibration, load_config
 from traffic.live import ClipSaver, LiveSource, LiveYieldWatcher, camera_url, probe_stream, redact
 from traffic.pipeline import Annotator, Detector, new_analyzer, write_run
@@ -179,6 +179,13 @@ def main() -> None:
                                     vehicle_id, clip.name if clip else "", what])
 
     def handle(judged) -> None:
+        clips = {}   # id(event) -> its clip: one per pedestrian and outcome, however many drivers
+        if saver:
+            vehicles = list({id(v): v for j in judged for v in j.vehicles}.values())
+            for outcome in wanted:
+                for group in by_pedestrian([e for j in judged for e in j.events if e.outcome == outcome]):
+                    path = saver.add(group, vehicles, live_clip_dir(out, outcome))
+                    clips.update({id(e): path for e in group})
         for j in judged:
             c = j.crossing
             when = start_time + timedelta(seconds=c.wait_start)
@@ -190,9 +197,8 @@ def main() -> None:
                 outcomes[e.outcome] += 1
                 when = start_time + timedelta(seconds=e.passes)
                 status(f"{when:%H:%M:%S} {caption_for(e)}")
-                clip = (saver.add(e, live_clip_dir(out, e.outcome))
-                        if saver and e.outcome in wanted else None)
-                log_row(when, e.outcome, e.direction or "", e.vehicle.tid, clip, caption_for(e))
+                log_row(when, e.outcome, e.direction or "", e.vehicle.tid, clips.get(id(e)),
+                        caption_for(e))
 
     window = Window(Annotator(cfg, cal, start_time, (height, width))) if args.show else None
     status(f"Watching since {start_time:%a %b %d %H:%M:%S}. Press Ctrl+C to stop. Outputs -> {out}/")

@@ -129,8 +129,8 @@ automatically to make sure it has no audio.
 ## Live camera (Tapo C120)
 
 `live.py` watches a Tapo C120 (or any camera with an RTSP stream) instead of a recording.
-It saves a clip of every driver who doesn't yield to a pedestrian, and of every pedestrian
-crossing, as they happen. When you stop it, it writes the usual CSVs and `summary.md` for the
+It saves a clip of each pedestrian drivers don't yield to (one clip with all of those drivers),
+and of every pedestrian crossing, as they happen. When you stop it, it writes the usual CSVs and `summary.md` for the
 whole session.
 
 ### Camera setup (once)
@@ -274,9 +274,10 @@ every vehicle that reached the crosswalk while they were trying to cross is judg
 - **too close to stop**: reached the crosswalk less than 3 s after the pedestrian appeared, so
   it is not counted against the driver.
 
-Every "did not yield" gets an ~9 second clip in `yield_clips/` (in `out/did_not_yield/` for
-live sessions) with the vehicle boxed in red, the pedestrian highlighted, the time and a
-caption. All of them are joined in `yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
+Every pedestrian a driver didn't yield to gets one clip in `yield_clips/` (in
+`out/did_not_yield/` for live sessions), from a few seconds before the first such driver reaches
+the crosswalk until just after the last, with each of them boxed in red, the pedestrian
+highlighted, the time and a caption. All of them are joined in `yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
 automatic, and plants hide part of the near (north) end of the crosswalk. The numbers are in
 the "Drivers yielding to pedestrians" section of `summary.md`, and `pedestrians.csv` gains each
 crossing's wait at the curb and driver counts.
