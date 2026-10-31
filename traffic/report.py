@@ -224,6 +224,8 @@ def _yield_summary(out_dir: Path, crossings: int) -> dict | None:
         "avg_wait_at_curb_s": round(float(waits.mean()), 1) if len(waits) else None,
         "max_wait_at_curb_s": round(float(waits.max()), 1) if len(waits) else None,
         "clips": int((missed["clip"] != "").sum()) if len(missed) else 0,
+        # yield_clips/ for a recording; the folder live sessions share (../did_not_yield/) for one.
+        "clip_folder": next((str(Path(p).parent) for p in missed["clip"] if p), "") if len(missed) else "",
         "note_groups": bool(len(ev)) and ev["pedestrian"].astype(str).str.contains("\\+").any(),
         "by_direction": {
             d: {"yielded": int((g["outcome"] == "yielded").sum()),
@@ -270,8 +272,10 @@ def _yield_markdown(y: dict, limit: float) -> list[str]:
             L.append(f"| {d.capitalize()} | {r['yielded']} | {r['did_not_yield']} | {r['too_close_to_stop']} | {rate} |")
         L.append("")
     if y["clips"]:
-        L.append(f"- Video clip of each driver not yielding: `yield_clips/` ({y['clips']} clips, also joined "
-                 "in `yield_clips/all_did_not_yield.mp4`). Each one should be watched before it's shared.")
+        folder = y.get("clip_folder") or "yield_clips"
+        joined = "all_did_not_yield.mp4" if folder.startswith("..") else f"{folder}/all_did_not_yield.mp4"
+        L.append(f"- Video clip of each driver not yielding: `{folder}/` ({y['clips']} clips, also joined "
+                 f"in `{joined}`). Each one should be watched before it's shared.")
     L.append("")
     L.append("How this is judged: a pedestrian is \"trying to cross\" from when they wait at the curb at "
              "either end of the crosswalk until they finish crossing. A driver **did not yield** if they "

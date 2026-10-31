@@ -32,6 +32,12 @@ def caption_for(e: YieldEvent) -> str:
     return f"{e.direction.capitalize()} vehicle arrived too soon to stop for {who}"
 
 
+def live_clip_dir(session_dir: Path, outcome: str) -> Path:
+    """Where live sessions save their driver clips of one outcome: a single folder beside the
+    session folders (out/did_not_yield/), so the clips from every session are in one place."""
+    return session_dir.parent / outcome
+
+
 def clip_name(start_time, e: YieldEvent) -> str:
     ts = start_time + timedelta(seconds=e.passes)
     return f"{ts:%Y%m%d_%H%M%S}_{e.outcome}_{e.direction or 'unknown'}_V{e.vehicle.tid}.mp4"

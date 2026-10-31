@@ -9,9 +9,10 @@ and of every pedestrian crossing.
 
 The camera account comes from the macOS Keychain (see the README), or from the TAPO_USER and
 TAPO_PASSWORD environment variables if both are set.
-Press Ctrl+C to stop. Clips are saved to out/live_<date>_<time>/yield_clips/ and
-crossing_clips/ as they happen (about 20 s after each crossing), and each crossing and judged
-driver is added to yield_log.csv right away.
+Press Ctrl+C to stop. Clips of drivers not yielding are saved to out/did_not_yield/ (one folder
+for every session), and of each crossing to out/live_<date>_<time>/crossing_clips/, as they
+happen (about 20 s after each crossing). Each crossing and judged driver is added to
+yield_log.csv right away.
 On stop, the usual CSVs and summary.md are written for the whole session.
 
 While it runs, the Mac is kept from sleeping on its own (closing the lid still sleeps it). After
@@ -37,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import cv2
 
-from traffic.clips import caption_for, crossing_caption
+from traffic.clips import caption_for, crossing_caption, live_clip_dir
 from traffic.config import load_calibration, load_config
 from traffic.live import ClipSaver, LiveSource, LiveYieldWatcher, camera_url, probe_stream, redact
 from traffic.pipeline import Annotator, Detector, new_analyzer, write_run
@@ -189,7 +190,8 @@ def main() -> None:
                 outcomes[e.outcome] += 1
                 when = start_time + timedelta(seconds=e.passes)
                 status(f"{when:%H:%M:%S} {caption_for(e)}")
-                clip = saver.add(e, out / "yield_clips") if saver and e.outcome in wanted else None
+                clip = (saver.add(e, live_clip_dir(out, e.outcome))
+                        if saver and e.outcome in wanted else None)
                 log_row(when, e.outcome, e.direction or "", e.vehicle.tid, clip, caption_for(e))
 
     window = Window(Annotator(cfg, cal, start_time, (height, width))) if args.show else None

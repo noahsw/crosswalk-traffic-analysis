@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from traffic.clips import clip_name, concat, render_clip
+from traffic.clips import clip_name, concat, live_clip_dir, render_clip
 from traffic.config import load_calibration, load_config
 from traffic.report import local, write_summary
 from traffic.tracks import Analyzer
@@ -43,12 +43,15 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
 
     clip_dir = out / "yield_clips"
     wanted = set(y.get("clip_outcomes") or ["did_not_yield"])
+    joined = clip_dir / "all_did_not_yield.mp4"
     if not data.get("video"):
-        # A live session: there is no video to cut from, but its clips were saved as they happened.
+        # A live session: there is no video to cut from, but its clips were saved as they
+        # happened, into the folder all live sessions share.
+        joined = out / "all_did_not_yield.mp4"
         for e in events:
-            found = sorted(clip_dir.glob(f"*_{e.outcome}_*_V{e.vehicle.tid}.mp4"))
-            if found:
-                e.clip = f"yield_clips/{found[0].name}"
+            path = live_clip_dir(out, e.outcome) / clip_name(start_time, e)
+            if path.exists():
+                e.clip = f"../{path.parent.name}/{path.name}"
     else:
         shutil.rmtree(clip_dir, ignore_errors=True)
     if make_clips and data.get("video"):
@@ -66,7 +69,7 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
     not_yield = sorted((e for e in events if e.clip and e.outcome == "did_not_yield"),
                        key=lambda e: e.passes)
     if not_yield:
-        concat([out / e.clip for e in not_yield], clip_dir / "all_did_not_yield.mp4")
+        concat([out / e.clip for e in not_yield], joined)
 
     rows = [{
         "pedestrian": "+".join(f"P{c.ped.tid}" for c in e.crossings),

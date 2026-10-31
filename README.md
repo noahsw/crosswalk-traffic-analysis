@@ -186,11 +186,13 @@ line, speed trap, gates, a box per tracked vehicle and person, and running count
 **q** in the window (or close it) to hide it; the session keeps going. The window is
 skipped on frames where detection is behind, so it never costs detections.
 
-Press **Ctrl+C** (or `kill` the process) to stop. Everything goes to `out/live_<date>_<time>/`:
+Press **Ctrl+C** (or `kill` the process) to stop. Clips of drivers who did not yield go to
+**`out/did_not_yield/`**, one folder shared by every session, so they're all in one place.
+Each is saved about 20 seconds after it happens: the pedestrian has to finish crossing first,
+and every car that could still count has to pass. These are the same clips as for a recording,
+with the date in the file name. (If `yielding.clip_outcomes` adds other outcomes, they get
+their own shared folders, e.g. `out/yielded/`.) Everything else goes to `out/live_<date>_<time>/`:
 
-- `yield_clips/`: one clip per driver who did not yield, saved about 20 seconds after it
-  happens. The pedestrian has to finish crossing first, and every car that could still count
-  has to pass. These are the same clips as for a recording, with the date in the file name.
 - `crossing_clips/`: one clip per pedestrian crossing, so you can check the results by eye.
   Each starts 10 seconds before the pedestrian is first seen waiting at the curb
   (`yielding.crossing_clip_seconds_before`), so you can see whether they had to wait for
@@ -203,7 +205,8 @@ Press **Ctrl+C** (or `kill` the process) to stop. Everything goes to `out/live_<
   they are judged, with the driver clip's file name. Clips and this log are already on disk if the session never finishes
   (battery dies, a crash); the files below are only written on stop.
 - On stop: `vehicles.csv`, `pedestrians.csv`, `yield_events.csv`, `summary.md`, the review
-  images and `yield_clips/all_did_not_yield.mp4`. Live mode doesn't write an annotated video.
+  images and `all_did_not_yield.mp4` (that session's clips joined). Live mode doesn't write an
+  annotated video.
 
 To keep clips, the stream is also recorded in 10-second pieces under `work/live/`. Pieces
 older than 10 minutes are deleted, and the folder is removed when the session ends. If the
@@ -271,9 +274,9 @@ every vehicle that reached the crosswalk while they were trying to cross is judg
 - **too close to stop**: reached the crosswalk less than 3 s after the pedestrian appeared, so
   it is not counted against the driver.
 
-Every "did not yield" gets an ~9 second clip in `yield_clips/` with the vehicle boxed in red,
-the pedestrian highlighted, the time and a caption. All of them are joined in
-`yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
+Every "did not yield" gets an ~9 second clip in `yield_clips/` (in `out/did_not_yield/` for
+live sessions) with the vehicle boxed in red, the pedestrian highlighted, the time and a
+caption. All of them are joined in `yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
 automatic, and plants hide part of the near (north) end of the crosswalk. The numbers are in
 the "Drivers yielding to pedestrians" section of `summary.md`, and `pedestrians.csv` gains each
 crossing's wait at the curb and driver counts.
