@@ -38,16 +38,37 @@ def live_clip_dir(session_dir: Path, outcome: str) -> Path:
     return session_dir.parent / outcome
 
 
-def clip_name(start_time, e: YieldEvent) -> str:
-    ts = start_time + timedelta(seconds=e.passes)
-    return f"{ts:%Y%m%d_%H%M%S}_{e.outcome}_{e.direction or 'unknown'}_V{e.vehicle.tid}.mp4"
+def by_pedestrian(events) -> list[list[YieldEvent]]:
+    """Drivers' events grouped by the pedestrian they were judged against, one group per clip.
+    Pedestrians crossing together share their drivers, so they share a group. Groups and the
+    events in them are in the order the drivers reached the crosswalk."""
+    groups: list[list[YieldEvent]] = []
+    for e in sorted(events, key=lambda e: e.passes):
+        peds = {id(c) for c in e.crossings}
+        joins = [g for g in groups if any(id(c) in peds for x in g for c in x.crossings)]
+        groups = [g for g in groups if not any(g is j for j in joins)]
+        groups.append(sorted([x for g in joins for x in g] + [e], key=lambda x: x.passes))
+    return sorted(groups, key=lambda g: g[0].passes)
 
 
-def clip_window(e: YieldEvent, seconds_before: float, seconds_after: float) -> tuple[float, float]:
-    """(start, end) of an event's clip, in seconds on the tracks' timeline."""
-    c = e.crossing
-    t0 = max(0.0, min(e.passes - 4.0, max(c.wait_start - 1.0, e.passes - seconds_before)))
-    return t0, e.passes + seconds_after
+def clip_name(start_time, events: list[YieldEvent]) -> str:
+    """e.g. 20261030_143933_did_not_yield_westbound+eastbound_V463+V464.mp4, for the events of
+    one outcome against one pedestrian (see by_pedestrian)."""
+    events = sorted(events, key=lambda e: e.passes)
+    ts = start_time + timedelta(seconds=events[0].passes)
+    directions = "+".join(dict.fromkeys(e.direction or "unknown" for e in events))
+    vehicles = "+".join(f"V{e.vehicle.tid}" for e in events)
+    return f"{ts:%Y%m%d_%H%M%S}_{events[0].outcome}_{directions}_{vehicles}.mp4"
+
+
+def clip_window(events: list[YieldEvent], seconds_before: float,
+                seconds_after: float) -> tuple[float, float]:
+    """(start, end) of a clip of drivers passing one pedestrian, in seconds on the tracks'
+    timeline: from a little before the first reaches the crosswalk until just after the last."""
+    first = min(events, key=lambda e: e.passes)
+    t0 = max(0.0, min(first.passes - 4.0, max(first.crossing.wait_start - 1.0,
+                                              first.passes - seconds_before)))
+    return t0, max(e.passes for e in events) + seconds_after
 
 
 def _frames(video: Path, t0: float, t1: float, offset: float, times: list[float] | None):
@@ -66,33 +87,14 @@ def _frames(video: Path, t0: float, t1: float, offset: float, times: list[float]
             yield t, frame
 
 
-def render_clip(video: Path, out_path: Path, e: YieldEvent, crosswalk, start_time,
-                seconds_before: float, seconds_after: float, offset: float = 0.0,
+def render_clip(video: Path, out_path: Path, events: list[YieldEvent], vehicles, crosswalk,
+                start_time, seconds_before: float, seconds_after: float, offset: float = 0.0,
                 times: list[float] | None = None) -> None:
-    """`offset` and `times`: see _frames."""
-    t0, t1 = clip_window(e, seconds_before, seconds_after)
-    c = e.crossing
-    info = probe(video)
-    writer = VideoWriter(out_path, info.width, info.height, info.fps, bitrate="5M")
-    cw = np.asarray(crosswalk, np.int32)
-    caption = caption_for(e)
-    color = render.RED if e.outcome == "did_not_yield" else render.GREEN
-    for pts, frame in _frames(video, t0, t1, offset, times):
-        layer = frame.copy()
-        cv2.fillPoly(layer, [cw], render.CROSSWALK_COLOR)
-        cv2.addWeighted(layer, 0.3, frame, 0.7, 0, dst=frame)
-        vb = box_at(e.vehicle.boxes, pts)
-        if vb is not None:
-            render.draw_box(frame, vb, color, f"#{e.vehicle.tid} {OUTCOME_TEXT[e.outcome]}", thickness=4)
-        pb = box_at(c.ped.boxes, pts)
-        if pb is not None:
-            render.draw_box(frame, pb, render.MAGENTA, "pedestrian", thickness=3)
-        ts = start_time + timedelta(seconds=pts)
-        render.draw_timestamp(frame, ts.strftime("%a %b %d %Y %H:%M:%S PT"))
-        render.put_label(frame, caption, (12, frame.shape[0] - 14), render.WHITE, scale=1.0,
-                         thickness=2, pad=10)
-        writer.write(frame)
-    writer.close()
+    """A clip of the drivers in `events` passing one pedestrian (see by_pedestrian).
+    `offset` and `times`: see _frames."""
+    crossings = list({id(c): c for e in events for c in e.crossings}.values())
+    _render(video, out_path, crossings, vehicles, crosswalk, start_time,
+            clip_window(events, seconds_before, seconds_after), offset, times)
 
 
 # Crossing clips cover a group of pedestrians who crossed together (often just one).
@@ -135,10 +137,16 @@ def crossing_window(crossings, seconds_before: float, seconds_after: float) -> t
 def render_crossing_clip(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_time,
                          seconds_before: float, seconds_after: float, offset: float = 0.0,
                          times: list[float] | None = None) -> None:
-    """Every vehicle in view is boxed: judged drivers by outcome (red = did not yield), others gray.
-    `offset` and `times`: see _frames."""
-    t0, t1 = crossing_window(crossings, seconds_before, seconds_after)
-    judged = {e.vehicle.tid: e.outcome for c in crossings for e in c.events}
+    """`offset` and `times`: see _frames."""
+    _render(video, out_path, crossings, vehicles, crosswalk, start_time,
+            crossing_window(crossings, seconds_before, seconds_after), offset, times)
+
+
+def _render(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_time,
+            window: tuple[float, float], offset: float, times: list[float] | None) -> None:
+    """Every vehicle in view is boxed: judged drivers by outcome (red = did not yield), others gray."""
+    t0, t1 = window
+    judged = {e.vehicle.tid: e for c in crossings for e in c.events}
     vehicles = [v for v in vehicles if v.kind == "vehicle" and v.boxes
                 and v.boxes[0][0] <= t1 and v.boxes[-1][0] >= t0]
     info = probe(video)
@@ -153,10 +161,12 @@ def render_crossing_clip(video: Path, out_path: Path, crossings, vehicles, cross
             vb = box_at(v.boxes, pts)
             if vb is None:
                 continue
-            outcome = judged.get(v.tid)
-            if outcome:
-                color = render.RED if outcome == "did_not_yield" else render.GREEN
-                render.draw_box(frame, vb, color, f"#{v.tid} {OUTCOME_TEXT[outcome]}", thickness=4)
+            e = judged.get(v.tid)
+            if e:
+                color = render.RED if e.outcome == "did_not_yield" else render.GREEN
+                speed = f" {e.speed_mph:.0f} mph" if e.outcome == "did_not_yield" and e.speed_mph else ""
+                render.draw_box(frame, vb, color, f"#{v.tid} {OUTCOME_TEXT[e.outcome]}{speed}",
+                                thickness=4)
             else:
                 render.draw_box(frame, vb, render.GRAY, f"#{v.tid}")
         for c in crossings:

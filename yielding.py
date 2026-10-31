@@ -1,4 +1,5 @@
-"""Find drivers who didn't yield to pedestrians, and cut a video clip of each one.
+"""Find drivers who didn't yield to pedestrians, and cut a video clip of each pedestrian they
+didn't yield to.
 
 Runs automatically at the end of analyze.py. Run it by hand to redo the analysis from a
 finished run's saved tracks (out/<run>/tracks.pkl) after changing the `yielding` settings
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from traffic.clips import clip_name, concat, live_clip_dir, render_clip
+from traffic.clips import by_pedestrian, clip_name, concat, live_clip_dir, render_clip
 from traffic.config import load_calibration, load_config
 from traffic.report import local, write_summary
 from traffic.tracks import Analyzer
@@ -46,30 +47,39 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
     joined = clip_dir / "all_did_not_yield.mp4"
     if not data.get("video"):
         # A live session: there is no video to cut from, but its clips were saved as they
-        # happened, into the folder all live sessions share.
+        # happened, into the folder all live sessions share, and yield_log.csv names each
+        # driver's clip.
         joined = out / "all_did_not_yield.mp4"
+        log_path = out / "yield_log.csv"
+        logged = pd.read_csv(log_path, dtype=str, keep_default_na=False) if log_path.exists() else None
+        saved = ({(r.vehicle_id, r.outcome): r.clip for r in logged.itertuples() if r.clip}
+                 if logged is not None and len(logged) else {})
         for e in events:
-            path = live_clip_dir(out, e.outcome) / clip_name(start_time, e)
-            if path.exists():
+            name = saved.get((str(e.vehicle.tid), e.outcome))
+            path = live_clip_dir(out, e.outcome) / name if name else None
+            if path and path.exists():
                 e.clip = f"../{path.parent.name}/{path.name}"
     else:
         shutil.rmtree(clip_dir, ignore_errors=True)
     if make_clips and data.get("video"):
-        misses = sorted((e for e in events if e.outcome in wanted), key=lambda e: e.passes)
-        misses = misses[:int(y["max_clips"])]
-        if misses:
+        # One clip per pedestrian and outcome, with every driver of that outcome they met.
+        groups = sorted((g for o in wanted for g in by_pedestrian([e for e in events if e.outcome == o])),
+                        key=lambda g: g[0].passes)
+        groups = groups[:int(y["max_clips"])]
+        if groups:
             clip_dir.mkdir()
-            log(f"Rendering {len(misses)} clip(s): {', '.join(sorted(wanted))}...")
-        for i, e in enumerate(misses, 1):
-            path = clip_dir / clip_name(start_time, e)
-            render_clip(Path(data["video"]), path, e, cal["crosswalk"], start_time,
-                        float(y["clip_seconds_before"]), float(y["clip_seconds_after"]))
-            e.clip = f"yield_clips/{path.name}"
-            log(f"  {i}/{len(misses)} {path.name}")
+            log(f"Rendering {len(groups)} clip(s): {', '.join(sorted(wanted))}...")
+        for i, group in enumerate(groups, 1):
+            path = clip_dir / clip_name(start_time, group)
+            render_clip(Path(data["video"]), path, group, data["vehicles"], cal["crosswalk"],
+                        start_time, float(y["clip_seconds_before"]), float(y["clip_seconds_after"]))
+            for e in group:
+                e.clip = f"yield_clips/{path.name}"
+            log(f"  {i}/{len(groups)} {path.name}")
     not_yield = sorted((e for e in events if e.clip and e.outcome == "did_not_yield"),
                        key=lambda e: e.passes)
     if not_yield:
-        concat([out / e.clip for e in not_yield], joined)
+        concat([out / clip for clip in dict.fromkeys(e.clip for e in not_yield)], joined)
 
     rows = [{
         "pedestrian": "+".join(f"P{c.ped.tid}" for c in e.crossings),

@@ -425,8 +425,9 @@ class LiveYieldWatcher:
 @dataclass
 class _Clip:
     clip_dir: Path
-    event: YieldEvent | None = None                    # a driver's yield event, or
+    events: list[YieldEvent] = field(default_factory=list)   # drivers passing one pedestrian, or
     group: list[JudgedCrossing] = field(default_factory=list)   # pedestrians crossing together
+    vehicles: list = field(default_factory=list)       # for `events`: every vehicle near them
     not_before: float = 0.0                            # time.time() to wait for, so others can join
     started: bool = False                              # being cut, so nothing more joins it
 
@@ -451,12 +452,13 @@ class ClipSaver:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def add(self, e: YieldEvent, clip_dir: Path) -> Path:
-        """Queue the clip of one driver's yield event. Returns where it will be saved."""
+    def add(self, events: list[YieldEvent], vehicles: list, clip_dir: Path) -> Path:
+        """Queue one clip of the drivers in `events` passing one pedestrian (see by_pedestrian).
+        Returns where it will be saved."""
         clip_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            self._pending.append(_Clip(clip_dir, event=e))
-        return clip_dir / clip_name(self.start_time, e)
+            self._pending.append(_Clip(clip_dir, events=events, vehicles=vehicles))
+        return clip_dir / clip_name(self.start_time, events)
 
     def add_crossing(self, j: JudgedCrossing, clip_dir: Path) -> None:
         """Queue the clip of a whole pedestrian crossing. Pedestrians who cross together go in
@@ -499,14 +501,14 @@ class ClipSaver:
 
     def _save(self, clip: _Clip) -> bool:
         """Try to save one clip. False if the recording doesn't cover it yet."""
-        if clip.event:
-            e = clip.event
-            path = clip.clip_dir / clip_name(self.start_time, e)
-            window = clip_window(e, self.before, self.after)
+        if clip.events:
+            events = clip.events
+            path = clip.clip_dir / clip_name(self.start_time, events)
+            window = clip_window(events, self.before, self.after)
 
             def render(piece, offset, times):
-                render_clip(piece, path, e, self.cal["crosswalk"], self.start_time,
-                            self.before, self.after, offset=offset, times=times)
+                render_clip(piece, path, events, clip.vehicles, self.cal["crosswalk"],
+                            self.start_time, self.before, self.after, offset=offset, times=times)
         else:
             crossings = [j.crossing for j in clip.group]
             vehicles = list({id(v): v for j in clip.group for v in j.vehicles}.values())
