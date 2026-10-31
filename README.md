@@ -189,7 +189,8 @@ skipped on frames where detection is behind, so it never costs detections.
 Press **Ctrl+C** (or `kill` the process) to stop. Clips of drivers who did not yield go to
 **`out/did_not_yield/`**, one folder shared by every session, so they're all in one place.
 Each is saved about 20 seconds after it happens: the pedestrian has to finish crossing first,
-and every car that could still count has to pass. These are the same clips as for a recording,
+and every car that could still count has to pass (and anyone who stepped up before them
+has to finish too, so each driver is judged against whoever was waiting first). These are the same clips as for a recording,
 with the date in the file name. (If `yielding.clip_outcomes` adds other outcomes, they get
 their own shared folders, e.g. `out/yielded/`.) Everything else goes to `out/live_<date>_<time>/`:
 

@@ -34,6 +34,7 @@ import numpy as np
 from .clips import (clip_name, clip_window, crossing_name, crossing_window, render_clip,
                     render_crossing_clip)
 from .video import RAW_OUTPUT, RawFrames, VideoError, _require, ffprobe_json, packet_times
+from .tracks import PED_NEAR_PX
 from .yields import Crossing, YieldAnalyzer, YieldEvent
 
 USER_ENV, PASSWORD_ENV = "TAPO_USER", "TAPO_PASSWORD"
@@ -388,25 +389,38 @@ class LiveYieldWatcher:
     A crossing is judged SETTLE_SECONDS after the pedestrian was last seen. By then every
     vehicle that can count against it (reaching the crosswalk up to 10 s after they finished)
     has passed, and has been tracked a little further to settle its direction.
+
+    A driver is judged against the first of the pedestrians it passed (as in yielding.py), so a
+    crossing also waits while anyone who appeared before them near the crosswalk is still being
+    tracked or waiting to be judged, then they're judged together. Otherwise someone who stepped
+    up just as a car arrived, and left first, would have it "too close to stop", though the
+    person who'd been waiting beside them for several seconds was not yielded to.
     """
 
     SETTLE_SECONDS = 15.0
+    MAX_HOLD_SECONDS = 120.0   # ...but never longer than this, for someone loitering nearby
 
     def __init__(self, cfg: dict, cal: dict, analyzer):
         self.analyzer = analyzer
         self.ya = YieldAnalyzer(cfg, cal, analyzer.direction_of)
-        self._next = 0               # index of the next pedestrian in analyzer.ped_records
+        self._seen = 0                          # how many of analyzer.ped_records are in _waiting
+        self._waiting: list = []                # pedestrians not judged yet
         self._judged: set[int] = set()   # vehicle track ids, so each driver is judged once
 
     def poll(self, now: float, force: bool = False) -> list[JudgedCrossing]:
         a = self.analyzer
-        ready = []
-        while self._next < len(a.ped_records) and (
-                force or a.ped_records[self._next].last_pts + self.SETTLE_SECONDS <= now):
-            ready.append(a.ped_records[self._next])
-            self._next += 1
+        self._waiting += a.ped_records[self._seen:]
+        self._seen = len(a.ped_records)
+        settled = {id(p) for p in self._waiting if force or p.last_pts + self.SETTLE_SECONDS <= now}
+        earlier = min([p.first_pts for p in self._waiting if id(p) not in settled]
+                      + [t.first_pts for t in a.people.values() if t.closest_px >= -PED_NEAR_PX],
+                      default=float("inf"))
+        ready = [p for p in self._waiting if id(p) in settled and (
+                 force or p.first_pts < earlier
+                 or p.last_pts + self.SETTLE_SECONDS + self.MAX_HOLD_SECONDS <= now)]
         if not ready:
             return []
+        self._waiting = [p for p in self._waiting if not any(p is r for r in ready)]
         since = min(p.first_pts for p in ready)   # vehicles must reach the crosswalk after this
         vehicles = [v for v in a.vehicles.values() if v.relevant]
         for v in reversed(a.vehicle_records):     # roughly in order of when they were last seen

@@ -231,3 +231,26 @@ def test_clip_runs_until_the_pedestrian_is_across():
     assert (e.outcome, e.phase) == ("did_not_yield", "waiting_at_curb")
     t0, t1 = clip_window([e], 6.0, 3.0)
     assert t0 < e.passes and t1 == c.exit + 3.0 > e.passes + 3.0
+
+
+def test_live_judges_a_driver_against_whoever_was_waiting_first():
+    from types import SimpleNamespace
+
+    from traffic.live import LiveYieldWatcher
+
+    ya = analyzer()
+    first = ped_crossing_near_to_far(ya, 100.0)     # waits 100-104, crosses 104-112...
+    for t in np.arange(112.0, 125.0, 0.1):          # ...then stays in view on the far side
+        first.path.append((t, *first.path[-1][1:]))
+    first.last_pts = first.path[-1][0]
+    second = ped_crossing_near_to_far(ya, 103.0)    # steps up as the car arrives, leaves first
+    second.tid = 3
+    v = vehicle(ya, 1, "westbound", 0.25, passes=103.7, mph=25)
+    a = SimpleNamespace(direction_of=lambda v: v.count_dir, ped_records=[second, first],
+                        vehicles={}, vehicle_records=[v], people={})
+    watcher = LiveYieldWatcher(CFG, CAL, a)
+    assert watcher.poll(131.0) == []                # second has settled; first hasn't
+    judged = watcher.poll(141.0)
+    events = [e for j in judged for e in j.events]
+    assert [(e.vehicle.tid, e.outcome, e.crossing.ped.tid) for e in events] == \
+        [(1, "did_not_yield", first.tid)]
