@@ -352,6 +352,17 @@ The city will trust the numbers more if they've been checked:
 
 Both results are added to `summary.md`.
 
+**Tests.** `PYTHONPATH=. uv run pytest` checks the yielding rules on made-up tracks
+(`tests/test_yields.py`) and on real moments at the crosswalk (`tests/scenarios/`), replayed
+both the way `yielding.py` judges them and the way live mode does. To add a real moment, say one
+the rules got wrong, save its tracks from a finished session:
+```bash
+uv run python tests/make_scenario.py out/live_2026-10-30_140052 P145 P153 --name group_shared_driver --note "what happens"
+```
+then watch its crossing clip and correct the expected results in the new file. Scenarios hold
+only track coordinates, with times counted from the start of the moment: no video, dates or
+place names, since the repo is public.
+
 ## How it works
 
 1. **Strip audio** (ffmpeg stream copy) and read the start time from the phone's metadata.
