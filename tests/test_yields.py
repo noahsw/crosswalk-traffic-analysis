@@ -289,7 +289,7 @@ def width(ya: YieldAnalyzer) -> float:
 
 
 def test_standing_still_at_the_curbs_edge_beside_the_crosswalk_is_waiting():
-    # Tonight's miss: standing just off the curb a few feet beside the crosswalk, a little past
+    # A real miss: standing just off the curb a few feet beside the crosswalk, a little past
     # the waiting area, while two cars drove by.
     ya = analyzer()
     spot = far_curb(ya, width(ya), into_road_ft=1)
@@ -375,3 +375,38 @@ def test_standing_by_the_crosswalk_without_crossing_is_not_a_crossing():
     p.path = [(100.0 + k / 10, *spot) for k in range(300)]
     p.path += [(130.0 + k / 10, *(spot + (far_curb(ya, 3 * width(ya)) - spot) * k / 50)) for k in range(50)]
     assert ya.crossing_for(p) is None
+
+
+# Cars seen only just before the crosswalk: coming into view at the frame's edge, or picked up
+# again under a new id after the tracker lost them.
+
+def seen_from(v: VehicleTrack, t0: float) -> VehicleTrack:
+    """The vehicle as tracked only from t0 on."""
+    v.path = [p for p in v.path if p[0] >= t0]
+    v.boxes = [b for b in v.boxes if b[0] >= t0]
+    v.first_pts = v.path[0][0]
+    return v
+
+
+def test_car_seen_just_before_the_crosswalk_driving_through_did_not_yield():
+    ya = analyzer()
+    ped = ped_crossing_near_to_far(ya, 100.0)    # waits 100-104, crosses 104-112
+    v = seen_from(vehicle(ya, 7, "westbound", 0.25, passes=103.5, mph=25), 103.2)
+    assert not ya.speed_mph(v, 102.5, 103.5)     # too little track to measure its approach
+    got = outcomes(ya.analyze([ped], [v]))
+    assert got == {7: ("did_not_yield", "waiting_at_curb")}
+
+
+def test_car_seen_just_before_the_crosswalk_creeping_is_not_judged():
+    # Barely moving at the crosswalk: it may have stopped first, and there's no telling.
+    ya = analyzer()
+    ped = ped_crossing_near_to_far(ya, 100.0)
+    v = seen_from(vehicle(ya, 7, "westbound", 0.25, passes=103.5, mph=3), 103.2)
+    assert outcomes(ya.analyze([ped], [v])) == {}
+
+
+def test_car_seen_just_before_the_crosswalk_after_they_cleared_its_lane_is_not_judged():
+    ya = analyzer()
+    ped = ped_crossing_near_to_far(ya, 100.0)    # past the near (westbound) half by about 109
+    v = seen_from(vehicle(ya, 7, "westbound", 0.25, passes=110.5, mph=25), 110.2)
+    assert outcomes(ya.analyze([ped], [v])) == {}

@@ -1,5 +1,5 @@
 {
-  "note": "P146 waits about 5 s at the south curb and crosses northbound; V1007 stops for them in the crosswalk. As logged live.",
+  "note": "A woman with a dog walks along the south sidewalk to the crosswalk and waits about 5 s. V1001 passes before she reaches it (not judged). A silver car drives through while she waits: the tracker lost it just before the crosswalk (V1003) and picked it up again as V1005, so its approach can't be measured, but it didn't stop. V1007 then stops for her in the crosswalk. Checked against the crossing clip.",
   "crosswalk": [[713.0, 791.0], [810.0, 824.0], [1194.0, 720.0], [1088.0, 716.0]],
   "image_size": [1920, 1080],
   "pedestrians": [
@@ -20,6 +20,10 @@
       }
     },
     "drivers": {
+      "V1005": [
+        "did_not_yield",
+        "waiting_at_curb"
+      ],
       "V1007": [
         "yielded",
         "in_crosswalk"

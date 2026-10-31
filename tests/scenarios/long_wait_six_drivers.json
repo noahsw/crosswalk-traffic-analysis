@@ -1,5 +1,5 @@
 {
-  "note": "P132 waits about 42 s at the south curb while four drivers go by without stopping, then crosses northbound. As logged live; the four did-not-yield clips show each driver.",
+  "note": "P132 stands at the south curb, right where someone waiting to cross would, for about 42 s while six drivers go by without stopping, then crosses northbound. V1271 and V1276 were first seen too briefly before the crosswalk to measure their approach, and were once skipped. Checked against the crossing clip.",
   "crosswalk": [[713.0, 791.0], [810.0, 824.0], [1194.0, 720.0], [1088.0, 716.0]],
   "image_size": [1920, 1080],
   "pedestrians": [
@@ -41,6 +41,14 @@
         "waiting_at_curb"
       ],
       "V1269": [
+        "did_not_yield",
+        "waiting_at_curb"
+      ],
+      "V1271": [
+        "did_not_yield",
+        "waiting_at_curb"
+      ],
+      "V1276": [
         "did_not_yield",
         "waiting_at_curb"
       ]

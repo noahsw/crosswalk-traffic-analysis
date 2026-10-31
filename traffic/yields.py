@@ -258,17 +258,25 @@ class YieldAnalyzer:
                 direction = self.direction_of(v)
                 before = self.speed_mph(v, max(c.wait_start - 1, tv - 8), tv)
                 at = self.speed_mph(v, tv - 0.5, tv + 0.5)
-                if not before:
-                    continue       # not tracked long enough before the crosswalk to judge
-                min_speed = min(s for _, s in before)
                 speed = float(np.median([x[1] for x in at])) if at else None
                 lead = tv - c.wait_start
-                # A yield if it stopped while the pedestrian was trying to cross and needed this
-                # lane, and then waited until they no longer did. (Stopping at the Havana stop sign
-                # and then pulling out in front of someone waiting to cross isn't yielding.)
-                stopped = [t for t, s in before
-                           if s < self.stopped_mph and c.wait_start - 0.5 <= t <= c.exit + 0.5]
-                t_yield = next((t for t in stopped if self.conflicts(c, direction, t)[0]), None)
+                if before:
+                    min_speed = min(s for _, s in before)
+                    # A yield if it stopped while the pedestrian was trying to cross and needed
+                    # this lane, and then waited until they no longer did. (Stopping at the Havana
+                    # stop sign and then pulling out in front of someone waiting to cross isn't
+                    # yielding.)
+                    stopped = [t for t, s in before
+                               if s < self.stopped_mph and c.wait_start - 0.5 <= t <= c.exit + 0.5]
+                    t_yield = next((t for t in stopped if self.conflicts(c, direction, t)[0]), None)
+                elif speed is not None and speed >= self.stopped_mph:
+                    # Seen too briefly on the way in to tell whether it stopped (it came into view
+                    # just before the crosswalk, or the tracker lost it and picked it up again
+                    # under a new id). Whatever it did before, it didn't yield if it's moving
+                    # through the crosswalk while the pedestrian needs its lane: judged below.
+                    min_speed, t_yield = None, None
+                else:
+                    continue       # not tracked long enough around the crosswalk to judge
                 if t_yield is not None and (tv > c.exit or not self.conflicts(c, direction, tv)[0]):
                     if direction in yielded_dirs:
                         continue   # queued behind a yielding vehicle
