@@ -80,7 +80,7 @@ yielding:
   stopped_mph: 5             # slowing below this before the crosswalk counts as yielding
   waiting_area_px: 90        # how far beyond each end of the crosswalk counts as waiting at the curb
   clip_seconds_before: 6     # each clip starts this long before the vehicle reaches the crosswalk
-  clip_seconds_after: 3
+  clip_seconds_after: 3      # ...and ends this long after the vehicle has passed and the pedestrian is across
   max_clips: 60
   clip_outcomes: [did_not_yield]   # add yielded / too_close_to_stop to clip those too
   clip_every_crossing: true        # live mode: also save a clip of every pedestrian crossing
