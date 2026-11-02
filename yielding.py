@@ -30,7 +30,7 @@ from traffic.yields import YieldAnalyzer
 EVENT_COLUMNS = ["pedestrian", "pedestrian_direction", "started_waiting_local", "wait_at_curb_s",
                  "vehicle", "vehicle_direction", "vehicle_reaches_crosswalk_local", "video_seconds",
                  "pedestrian_was", "seconds_after_pedestrian_appeared", "approx_speed_mph",
-                 "slowest_approach_mph", "outcome", "clip"]
+                 "slowest_approach_mph", "outcome", "severity", "severity_why", "clip"]
 
 
 def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log=print) -> list:
@@ -95,6 +95,8 @@ def analyze_yields(out: Path, cfg: dict, cal: dict, make_clips: bool = True, log
         "approx_speed_mph": round(e.speed_mph, 1) if e.speed_mph is not None else None,
         "slowest_approach_mph": round(e.min_speed_mph, 1) if e.min_speed_mph is not None else None,
         "outcome": e.outcome,
+        "severity": e.severity or "",
+        "severity_why": e.severity_why,
         "clip": e.clip,
     } for e in sorted(events, key=lambda e: e.passes)]
     pd.DataFrame(rows, columns=EVENT_COLUMNS).to_csv(out / "yield_events.csv", index=False)

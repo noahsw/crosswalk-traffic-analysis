@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from . import render
-from .video import FrameReader, VideoWriter, assert_no_audio, probe
+from .video import FrameReader, VideoWriter, assert_no_audio, h264_args, probe
 from .yields import YieldEvent, box_at
 
 OUTCOME_TEXT = {
@@ -52,13 +52,16 @@ def by_pedestrian(events) -> list[list[YieldEvent]]:
 
 
 def clip_name(start_time, events: list[YieldEvent]) -> str:
-    """e.g. 20261030_143933_did_not_yield_westbound+eastbound_V463+V464.mp4, for the events of
-    one outcome against one pedestrian (see by_pedestrian)."""
+    """e.g. S4_20261030_143933_did_not_yield_westbound+eastbound_V463+V464.mp4, for the events of
+    one outcome against one pedestrian (see by_pedestrian). S4 is the worst driver's severity
+    (drivers who did not yield only), so sorting by name groups the worst together."""
     events = sorted(events, key=lambda e: e.passes)
     ts = start_time + timedelta(seconds=events[0].passes)
     directions = "+".join(dict.fromkeys(e.direction or "unknown" for e in events))
     vehicles = "+".join(f"V{e.vehicle.tid}" for e in events)
-    return f"{ts:%Y%m%d_%H%M%S}_{events[0].outcome}_{directions}_{vehicles}.mp4"
+    worst = max(e.severity for e in events)
+    score = f"S{worst}_" if worst else ""
+    return f"{score}{ts:%Y%m%d_%H%M%S}_{events[0].outcome}_{directions}_{vehicles}.mp4"
 
 
 def clip_window(events: list[YieldEvent], seconds_before: float,
@@ -207,4 +210,22 @@ def concat(clips: list[Path], out_path: Path) -> None:
                     "-i", str(listing), "-c", "copy", "-an", "-movflags", "+faststart", str(out_path)],
                    check=True)
     listing.unlink()
+    assert_no_audio(out_path)
+
+
+def reel(clips: list[Path], out_path: Path) -> None:
+    """Join clips in order, re-encoded to the first one's size, so clips from different cameras
+    (a phone recording and the live camera) can go in one video."""
+    if not clips:
+        return
+    info = probe(clips[0])
+    w, h = info.width, info.height
+    fit = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,"
+           "setsar=1,fps=30")
+    graph = "".join(f"[{i}:v:0]{fit}[v{i}];" for i in range(len(clips)))
+    graph += "".join(f"[v{i}]" for i in range(len(clips))) + f"concat=n={len(clips)}:v=1:a=0[out]"
+    inputs = [arg for c in clips for arg in ("-i", str(c))]
+    subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-y", *inputs, "-filter_complex", graph,
+                    "-map", "[out]", "-an", *h264_args("5M"), "-pix_fmt", "yuv420p",
+                    "-map_metadata", "-1", "-movflags", "+faststart", str(out_path)], check=True)
     assert_no_audio(out_path)

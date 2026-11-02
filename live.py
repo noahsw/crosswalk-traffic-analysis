@@ -172,12 +172,14 @@ def main() -> None:
     outcomes: Counter = Counter()
     log_path = out / "yield_log.csv"   # written as it goes, in case the session never finishes
     with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow(["time_local", "outcome", "direction", "vehicle_id", "clip", "what"])
+        csv.writer(f).writerow(["time_local", "outcome", "direction", "vehicle_id", "clip", "what",
+                                "severity", "severity_why"])
 
-    def log_row(when, outcome, direction, vehicle_id, clip, what) -> None:
+    def log_row(when, outcome, direction, vehicle_id, clip, what, severity=0, severity_why="") -> None:
         with open(log_path, "a", newline="") as f:
             csv.writer(f).writerow([when.isoformat(timespec="seconds"), outcome, direction,
-                                    vehicle_id, clip.name if clip else "", what])
+                                    vehicle_id, clip.name if clip else "", what, severity or "",
+                                    severity_why])
 
     def handle(judged) -> None:
         clips = {}   # id(event) -> its clip: one per pedestrian and outcome, however many drivers
@@ -197,9 +199,10 @@ def main() -> None:
             for e in j.events:
                 outcomes[e.outcome] += 1
                 when = start_time + timedelta(seconds=e.passes)
-                status(f"{when:%H:%M:%S} {caption_for(e)}")
+                score = f" (severity {e.severity}/5: {e.severity_why})" if e.severity else ""
+                status(f"{when:%H:%M:%S} {caption_for(e)}{score}")
                 log_row(when, e.outcome, e.direction or "", e.vehicle.tid, clips.get(id(e)),
-                        caption_for(e))
+                        caption_for(e), e.severity, e.severity_why)
 
     window = Window(Annotator(cfg, cal, start_time, (height, width))) if args.show else None
     status(f"Watching since {start_time:%a %b %d %H:%M:%S}. Press Ctrl+C to stop. Outputs -> {out}/")

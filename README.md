@@ -191,7 +191,7 @@ Press **Ctrl+C** (or `kill` the process) to stop. Clips of drivers who did not y
 Each is saved about 20 seconds after it happens: the pedestrian has to finish crossing first,
 and every car that could still count has to pass (and anyone who stepped up before them
 has to finish too, so each driver is judged against whoever was waiting first). These are the same clips as for a recording,
-with the date in the file name. (If `yielding.clip_outcomes` adds other outcomes, they get
+with the date in the file name, after a 1 to 5 severity score (see **Finding the worst drivers**). (If `yielding.clip_outcomes` adds other outcomes, they get
 their own shared folders, e.g. `out/yielded/`.) Everything else goes to `out/live_<date>_<time>/`:
 
 - `crossing_clips/`: one clip per pedestrian crossing, so you can check the results by eye.
@@ -317,6 +317,44 @@ highlighted, the time and a caption. All of them are joined in `yield_clips/all_
 automatic, and plants hide part of the near (north) end of the crosswalk. The numbers are in
 the "Drivers yielding to pedestrians" section of `summary.md`, and `pedestrians.csv` gains each
 crossing's wait at the curb and driver counts.
+
+### Finding the worst drivers
+
+Each driver who did not yield is scored from **1** (least bad) to **5** (worst), to find the
+clips worth showing among many. Points add up:
+
+| | Points |
+|---|---|
+| Pedestrian already in the crosswalk | 3, or 4 if in the car's half of the road |
+| Pedestrian waiting at the curb beside the car's lane (across the road: 0) | 1 |
+| About 15 to 19 mph at the crosswalk / 20 mph or more | 1 / 2 |
+| Didn't slow down (never below 80% of its speed at the crosswalk, at 10 mph or more) | 1 |
+| Pedestrian had been trying to cross for 10 s or more | 1 |
+
+Passing someone still at the curb scores at most 4: a 5 needs the pedestrian to be in the street.
+The reasons are spelled out, e.g. "pedestrian waiting at the curb beside the car's lane; about
+24 mph; didn't slow down".
+
+- Each clip's name starts with its worst driver's score, e.g.
+  `S4_20261031_175640_did_not_yield_eastbound_V9241.mp4`, so sorting by name puts all the 4s together.
+- `yield_events.csv` and `yield_log.csv` have `severity` and `severity_why` columns, and
+  `summary.md` has a table of each run's 10 worst drivers.
+- To rank every run and live session in `out/` together:
+
+  ```bash
+  uv run python rank.py
+  ```
+
+  It writes `out/worst_drivers.csv` (every driver who did not yield, worst first, with their clip)
+  and `out/worst_did_not_yield.mp4` (the 10 worst clips joined, worst first; `--top 20` for more).
+  It also scores runs from before scores existed, and renames their clips to start with the score
+  (`--dry-run` shows what it would rename). A finished run is scored in full from its saved tracks.
+  A live session that never finished (no `tracks.pkl`) is scored from `yield_log.csv`, which
+  leaves out where the pedestrian stood and whether the car slowed. Its clips are left alone if its
+  log changed in the last 2 hours, in case it's still running.
+
+The score is only a way to sort the clips. Speeds near the crosswalk are approximate, so watch
+each clip before you share it.
 
 To redo the yielding analysis after changing the `yielding` settings in `config.yaml`, without
 re-processing the video (it reuses the tracks saved in `tracks.pkl`):
