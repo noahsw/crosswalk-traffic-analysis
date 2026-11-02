@@ -189,7 +189,8 @@ skipped on frames where detection is behind, so it never costs detections.
 Press **Ctrl+C** (or `kill` the process) to stop. Clips of drivers who did not yield go to
 **`out/did_not_yield/`**, one folder shared by every session, so they're all in one place.
 Each is saved about 20 seconds after it happens: the pedestrian has to finish crossing first,
-and every car that could still count has to pass. These are the same clips as for a recording,
+and every car that could still count has to pass (and anyone who stepped up before them
+has to finish too, so each driver is judged against whoever was waiting first). These are the same clips as for a recording,
 with the date in the file name. (If `yielding.clip_outcomes` adds other outcomes, they get
 their own shared folders, e.g. `out/yielded/`.) Everything else goes to `out/live_<date>_<time>/`:
 
@@ -291,7 +292,15 @@ Its **How this compares** section puts the numbers in context with published ref
 **pedestrians.csv** lists one row per crossing, with its time and direction.
 
 **Driver yielding** (`yield_events.csv`, `yield_clips/`): for each pedestrian who crossed,
-every vehicle that reached the crosswalk while they were trying to cross is judged:
+every vehicle that reached the crosswalk while they were trying to cross is judged. They
+start trying to cross when they wait at the curb: in the waiting area at that end of the
+crosswalk (`yielding.waiting_area_px` deep, and a crosswalk's width to each side), or standing
+still up to 6 ft beyond it, at the curb's edge or in the gutter. Walking through there doesn't
+count, so someone walking along the road's edge who turns into the crosswalk hasn't been waiting.
+Drivers are only judged once the pedestrian has shown they mean to cross: by standing about
+there for 3 s (or already standing there when first seen), reaching the end of the crosswalk,
+or stepping in. Until then they may only be walking along the sidewalk, or dawdling at the
+corner, and a car that drives through isn't judged against them.
 
 - **did not yield**: drove through without slowing below 5 mph, in a lane the pedestrian
   still had to cross. While the pedestrian waits at the curb, both lanes count; set
@@ -303,7 +312,7 @@ every vehicle that reached the crosswalk while they were trying to cross is judg
 
 Every pedestrian a driver didn't yield to gets one clip in `yield_clips/` (in
 `out/did_not_yield/` for live sessions), from a few seconds before the first such driver reaches
-the crosswalk until just after the last, with each of them boxed in red, the pedestrian
+the crosswalk until the last has passed and the pedestrian is across, with each of them boxed in red, the pedestrian
 highlighted, the time and a caption. All of them are joined in `yield_clips/all_did_not_yield.mp4`. **Watch each clip before sharing it**: the rules are
 automatic, and plants hide part of the near (north) end of the crosswalk. The numbers are in
 the "Drivers yielding to pedestrians" section of `summary.md`, and `pedestrians.csv` gains each
@@ -373,6 +382,17 @@ The city will trust the numbers more if they've been checked:
    The target is a mean absolute error of 3 mph or less.
 
 Both results are added to `summary.md`.
+
+**Tests.** `PYTHONPATH=. uv run pytest` checks the yielding rules on made-up tracks
+(`tests/test_yields.py`) and on real moments at the crosswalk (`tests/scenarios/`), replayed
+both the way `yielding.py` judges them and the way live mode does. To add a real moment, say one
+the rules got wrong, save its tracks from a finished session:
+```bash
+uv run python tests/make_scenario.py out/live_2026-10-30_140052 P145 P153 --name group_shared_driver --note "what happens"
+```
+then watch its crossing clip and correct the expected results in the new file. Scenarios hold
+only track coordinates, with times counted from the start of the moment: no video, dates or
+place names, since the repo is public.
 
 ## How it works
 

@@ -64,11 +64,13 @@ def clip_name(start_time, events: list[YieldEvent]) -> str:
 def clip_window(events: list[YieldEvent], seconds_before: float,
                 seconds_after: float) -> tuple[float, float]:
     """(start, end) of a clip of drivers passing one pedestrian, in seconds on the tracks'
-    timeline: from a little before the first reaches the crosswalk until just after the last."""
+    timeline: from a little before the first reaches the crosswalk until just after the last has
+    and the pedestrians have made it across."""
     first = min(events, key=lambda e: e.passes)
     t0 = max(0.0, min(first.passes - 4.0, max(first.crossing.wait_start - 1.0,
                                               first.passes - seconds_before)))
-    return t0, max(e.passes for e in events) + seconds_after
+    end = max([e.passes for e in events] + [c.exit for e in events for c in e.crossings])
+    return t0, end + seconds_after
 
 
 def _frames(video: Path, t0: float, t1: float, offset: float, times: list[float] | None):
@@ -186,7 +188,7 @@ def _render(video: Path, out_path: Path, crossings, vehicles, crosswalk, start_t
         for c in crossings:
             pb = box_at(c.ped.boxes, pts)
             if pb is not None:
-                render.draw_box(frame, pb, render.MAGENTA, "pedestrian", thickness=3)
+                render.draw_box(frame, pb, render.MAGENTA, f"P{c.ped.tid}", thickness=3)
         ts = start_time + timedelta(seconds=pts)
         render.draw_timestamp(frame, ts.strftime("%a %b %d %Y %H:%M:%S PT"))
         render.put_label(frame, caption, (12, frame.shape[0] - 14), render.WHITE, scale=1.0,
