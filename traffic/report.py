@@ -227,11 +227,27 @@ def _yield_summary(out_dir: Path, crossings: int) -> dict | None:
         # yield_clips/ for a recording; the folder live sessions share (../did_not_yield/) for one.
         "clip_folder": next((str(Path(p).parent) for p in missed["clip"] if p), "") if len(missed) else "",
         "note_groups": bool(len(ev)) and ev["pedestrian"].astype(str).str.contains("\\+").any(),
+        "severity": _severity_summary(missed),
         "by_direction": {
             d: {"yielded": int((g["outcome"] == "yielded").sum()),
                 "did_not_yield": int((g["outcome"] == "did_not_yield").sum()),
                 "too_close_to_stop": int((g["outcome"] == "too_close_to_stop").sum())}
             for d, g in ev.groupby("vehicle_direction")} if len(ev) else {},
+    }
+
+
+def _severity_summary(missed: pd.DataFrame, top: int = 10) -> dict | None:
+    """Drivers who did not yield, by severity score, and the worst few (see yields.severity)."""
+    if not len(missed) or "severity" not in missed.columns:
+        return None
+    m = missed.assign(severity=pd.to_numeric(missed["severity"], errors="coerce"),
+                      speed=pd.to_numeric(missed["approx_speed_mph"], errors="coerce"))
+    m = m.dropna(subset=["severity"]).sort_values(["severity", "speed"], ascending=False)
+    return {
+        "counts": {int(k): int((m["severity"] == k).sum()) for k in range(5, 0, -1)},
+        "worst": [{"severity": int(r.severity), "when": str(r.vehicle_reaches_crosswalk_local)[:19],
+                   "direction": r.vehicle_direction, "why": r.severity_why, "clip": r.clip}
+                  for r in m.head(top).itertuples()],
     }
 
 
@@ -270,6 +286,22 @@ def _yield_markdown(y: dict, limit: float) -> list[str]:
             n = r["yielded"] + r["did_not_yield"]
             rate = f"{100 * r['yielded'] / n:.0f}%" if n else "n/a"
             L.append(f"| {d.capitalize()} | {r['yielded']} | {r['did_not_yield']} | {r['too_close_to_stop']} | {rate} |")
+        L.append("")
+    sev = y.get("severity")
+    if sev and sev["worst"]:
+        L.append("### Worst drivers who did not yield\n")
+        L.append("Each driver who did not yield is scored from 1 to 5. Points are added for a pedestrian "
+                 "already in the crosswalk (more if in the car's half of the road) or waiting beside the "
+                 "car's lane, a speed of 15 mph or more (more at 20+), not slowing down at all, and a "
+                 "pedestrian who had been trying to cross for 10 s or more. A score of 5 needs the "
+                 "pedestrian to be in the street. Clip names start with their worst driver's score "
+                 "(`S5_...`).\n")
+        L.append("Drivers by score: " + ", ".join(f"**{k}**: {n}" for k, n in sev["counts"].items()) + "\n")
+        L.append("| Score | When | Direction | Why | Clip |")
+        L.append("|---|---|---|---|---|")
+        for w in sev["worst"]:
+            clip = f"`{Path(w['clip']).name}`" if w["clip"] else ""
+            L.append(f"| {w['severity']} | {w['when']} | {w['direction']} | {w['why']} | {clip} |")
         L.append("")
     if y["clips"]:
         folder = y.get("clip_folder") or "yield_clips"

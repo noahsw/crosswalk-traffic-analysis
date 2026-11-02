@@ -219,6 +219,15 @@ class FrameReader(RawFrames):
             yield pts - self.info.start_pts, frame
 
 
+def h264_args(bitrate: str = "6M") -> list[str]:
+    """ffmpeg arguments for an H.264 encoder: the Mac's hardware one if there is one."""
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                              capture_output=True, text=True).stdout
+    if "h264_videotoolbox" in encoders:
+        return ["-c:v", "h264_videotoolbox", "-b:v", bitrate]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+
+
 class VideoWriter:
     """Encode BGR frames to H.264 MP4 with no audio and no source metadata."""
 
@@ -226,12 +235,7 @@ class VideoWriter:
                  out_height: int | None = None, bitrate: str = "6M"):
         _require("ffmpeg")
         self.path = path
-        encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
-                                  capture_output=True, text=True).stdout
-        if "h264_videotoolbox" in encoders:
-            codec = ["-c:v", "h264_videotoolbox", "-b:v", bitrate]
-        else:
-            codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+        codec = h264_args(bitrate)
         vf = ["-vf", f"scale=-2:{out_height}"] if out_height and out_height != height else []
         cmd = ["ffmpeg", "-hide_banner", "-v", "error", "-y",
                "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}",

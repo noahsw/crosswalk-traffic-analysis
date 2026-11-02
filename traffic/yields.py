@@ -19,6 +19,9 @@ have passed its half of the road.
 
 Speeds near the crosswalk are approximate: they use the crosswalk's measured length as
 the image scale. They only need to tell "stopped" from "drove through".
+
+Each driver who did not yield also gets a severity score from 1 to 5 (see severity), to find the
+worst ones among many.
 """
 
 from __future__ import annotations
@@ -59,12 +62,51 @@ class YieldEvent:
     speed_mph: float | None
     min_speed_mph: float | None
     outcome: str
+    severity: int = 0      # 1-5 for a driver who did not yield (see severity), else 0
+    severity_why: str = ""
     clip: str = ""
     others: list = field(default_factory=list)   # other pedestrians crossing together
 
     @property
     def crossings(self) -> list:
         return [self.crossing] + self.others
+
+
+def severity(phase: str, beside: bool | None, speed_mph: float | None,
+             slowest_mph: float | None, lead_s: float | None) -> tuple[int, str]:
+    """How bad a driver who did not yield was, from 1 to 5, and why, e.g.
+    (4, "pedestrian in the crosswalk, in the car's half; about 22 mph; didn't slow down").
+
+    Points add up, and the score is between 1 and 5:
+    - the pedestrian was in the crosswalk: 3, plus 1 more if in the car's half of the road;
+      waiting at the curb beside the car's lane: 1 (at the far curb: 0)
+    - about 15-20 mph at the crosswalk: 1; 20 mph or more: 2
+    - didn't slow down (never below 80% of its speed at the crosswalk, at 10 mph or more): 1
+    - the pedestrian had been trying to cross for 10 s or more: 1
+    Passing a pedestrian at the curb scores at most 4: 5 is kept for one already in the street.
+
+    `beside`: the pedestrian was in, or at the curb beside, the car's lane (None if unknown).
+    Each value can be None if unknown, as when re-scoring from an old log.
+    """
+    points, why = 0, []
+    if phase == "in_crosswalk":
+        points += 3 + bool(beside)
+        why.append("pedestrian in the crosswalk" + (", in the car's half" if beside else ""))
+    else:
+        points += bool(beside)
+        why.append("pedestrian waiting at the curb" + {True: " beside the car's lane",
+                                                       False: " across the road"}.get(beside, ""))
+    if speed_mph is not None:
+        mph = round(speed_mph)   # as shown, so "about 20 mph" always scores as 20
+        points += 2 if mph >= 20 else 1 if mph >= 15 else 0
+        why.append(f"about {mph} mph")
+        if slowest_mph is not None and speed_mph >= 10 and slowest_mph >= 0.8 * speed_mph:
+            points += 1
+            why.append("didn't slow down")
+    if lead_s is not None and lead_s >= 10:
+        points += 1
+        why.append(f"pedestrian trying to cross for {lead_s:.0f} s")
+    return max(1, min(points, 5 if phase == "in_crosswalk" else 4)), "; ".join(why)
 
 
 def _median_smooth(values: np.ndarray, k: int = 5) -> np.ndarray:
@@ -203,6 +245,18 @@ class YieldAnalyzer:
             return (p < half + buf) if lane == "near" else True, "in_crosswalk"
         return (p > half - buf) if lane == "far" else True, "in_crosswalk"
 
+    def beside(self, crossings: list[Crossing], direction: str, phase: str, when: float) -> bool | None:
+        """Was one of these pedestrians in the half of the crosswalk a vehicle travelling
+        `direction` drove through at `when`, or (still at the curb) waiting beside its lane?
+        None if its lane isn't known."""
+        lane = self.lanes.get(direction)
+        if lane is None:
+            return None
+        half = self.length_px / 2
+        return any((c.start_end if phase == "waiting_at_curb"
+                    else "near" if self.ped_proj_at(c, when) < half else "far") == lane
+                   for c in crossings)
+
     # ------------------------------------------------------------------ all together
     def analyze(self, peds: list[PersonTrack], vehicles: list[VehicleTrack]) -> list[Crossing]:
         passes = []
@@ -262,6 +316,9 @@ class YieldAnalyzer:
                     c.events.append(judged[id(v)])
                     continue
                 e = YieldEvent(c, v, direction, tv, phase, lead, speed, min_speed, outcome)
+                if outcome == "did_not_yield":
+                    e.severity, e.severity_why = severity(phase, self.beside([c], direction, phase, tv),
+                                                          speed, min_speed, lead)
                 judged[id(v)] = e
                 c.events.append(e)
         return crossings

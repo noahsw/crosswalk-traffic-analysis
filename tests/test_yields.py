@@ -6,7 +6,7 @@ import numpy as np
 
 from traffic.config import load_calibration, load_config
 from traffic.tracks import MPH_PER_FPS, PersonTrack, VehicleTrack
-from traffic.yields import YieldAnalyzer
+from traffic.yields import YieldAnalyzer, severity
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = load_config(ROOT / "config.yaml")
@@ -216,6 +216,33 @@ def test_one_clip_per_pedestrian():
     groups = by_pedestrian(events)
     assert [[e.vehicle.tid for e in g] for g in groups] == [[1, 2], [5]]
     assert clip_name(datetime(2026, 10, 30, 14, 0), groups[0]) == \
-        "20261030_140143_did_not_yield_eastbound+westbound_V1+V2.mp4"
+        "S5_20261030_140143_did_not_yield_eastbound+westbound_V1+V2.mp4"
     t0, t1 = clip_window(groups[0], 6.0, 3.0)
     assert t0 <= 103.5 - 4 and t1 == 105.0 + 3
+
+
+def test_severity_scores():
+    # Waiting across the road, 12 mph, slowed down: the least bad.
+    assert severity("waiting_at_curb", False, 12, 6, 4)[0] == 1
+    # Waiting beside the car's lane, 18 mph, didn't slow down.
+    score, why = severity("waiting_at_curb", True, 18, 17, 4)
+    assert score == 3 and why == "pedestrian waiting at the curb beside the car's lane; about 18 mph; didn't slow down"
+    # However bad, passing someone at the curb is at most a 4: 5 needs them in the street.
+    assert severity("waiting_at_curb", True, 25, 25, 30)[0] == 4
+    assert severity("in_crosswalk", True, 22, 21, 4)[0] == 5
+    # In the street, in the other half, slowed down: still at least a 3.
+    assert severity("in_crosswalk", False, 8, 4, 4)[0] == 3
+    # Unknown values (re-scored from an old log) add nothing.
+    assert severity("waiting_at_curb", None, None, None, None) == (1, "pedestrian waiting at the curb")
+
+
+def test_severity_of_judged_drivers():
+    ya = analyzer()
+    ped = ped_crossing_far_to_near(ya, 100.0)    # waits at the far curb 100-102, crosses 102-110
+    vs = [
+        vehicle(ya, 1, "eastbound", 0.75, passes=103.5, mph=22),   # far lane, ped in its half
+        vehicle(ya, 2, "westbound", 0.25, passes=104.0, mph=12),   # near lane, ped still in the far half
+    ]
+    got = {e.vehicle.tid: e for c in ya.analyze([ped], vs) for e in c.events}
+    assert got[1].severity == 5 and "in the car's half" in got[1].severity_why
+    assert got[2].severity == 4 and got[2].severity_why == "pedestrian in the crosswalk; about 12 mph; didn't slow down"
