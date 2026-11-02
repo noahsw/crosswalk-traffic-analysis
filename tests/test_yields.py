@@ -368,6 +368,55 @@ def test_shifting_about_while_standing_is_still_standing():
     assert abs(ya.crossing_for(ped).wait_start - 100.0) < 0.3
 
 
+def walk(ya: YieldAnalyzer, a: np.ndarray, b: np.ndarray, ft_per_s: float):
+    """A leg for ped_walking: from a to b at `ft_per_s`."""
+    return (float(np.linalg.norm(b - a)) / (ft_per_s * ya.px_per_ft), a, b)
+
+
+# Drivers are judged only once the pedestrian has shown they mean to cross (see _intent).
+
+def test_dawdling_by_the_crosswalk_is_not_yet_meaning_to_cross():
+    # A real case: walking along the sidewalk into the waiting area, slowing to an amble at the
+    # corner as a car drives through, then stepping in a few seconds later.
+    ya = analyzer()
+    back = -3.0   # on the sidewalk, 3 ft back from the curb
+    a, b = far_curb(ya, 2.5 * width(ya), back), far_curb(ya, 0.5 * width(ya), back)
+    c = b - (b - a) / np.linalg.norm(b - a) * 2.5 * ya.px_per_ft
+    legs = [walk(ya, a, b, 4.0), walk(ya, b, c, 1.0), walk(ya, c, far_curb(ya, 0, 1), 4.0)]
+    ped = ped_walking(ya, legs)
+    passes = 100.0 + legs[0][0] + 2.0
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=passes, mph=25)
+    (crossing,) = ya.analyze([ped], [car])
+    assert crossing.wait_start < passes - 3.0   # in the waiting area long enough to be judged...
+    assert outcomes([crossing]) == {}               # ...but only ambling, not waiting
+
+
+def test_standing_about_for_a_few_seconds_shows_they_mean_to_cross():
+    ya = analyzer()
+    back = -3.0
+    a, b = far_curb(ya, 2.5 * width(ya), back), far_curb(ya, 0.5 * width(ya), back)
+    legs = [walk(ya, a, b, 4.0), (6.0, b, b), walk(ya, b, far_curb(ya, 0, 1), 4.0)]
+    ped = ped_walking(ya, legs)
+    stopped = 100.0 + legs[0][0]
+    early = vehicle(ya, 7, "eastbound", 0.75, passes=stopped + 1.5, mph=25)   # they've just stopped
+    later = vehicle(ya, 8, "westbound", 0.25, passes=stopped + 4.5, mph=25)
+    assert outcomes(ya.analyze([ped], [early, later])) == {8: ("did_not_yield", "waiting_at_curb")}
+
+
+def test_walking_straight_into_the_crosswalk_shows_they_mean_to_cross():
+    # No pause: walking up to the crosswalk's end, and on in. A car driving through as they reach
+    # it is judged.
+    ya = analyzer()
+    a = far_curb(ya, 2.5 * width(ya), -3.0)
+    legs = [walk(ya, a, far_curb(ya, 0, -1.0), 4.0), walk(ya, far_curb(ya, 0, -1.0), far_curb(ya, 0, 1), 4.0)]
+    ped = ped_walking(ya, legs)
+    passes = 100.0 + legs[0][0] + 0.3
+    car = vehicle(ya, 7, "eastbound", 0.75, passes=passes, mph=25)
+    (crossing,) = ya.analyze([ped], [car])
+    assert crossing.intent < passes
+    assert outcomes([crossing]) == {7: ("did_not_yield", "waiting_at_curb")}
+
+
 def test_standing_by_the_crosswalk_without_crossing_is_not_a_crossing():
     ya = analyzer()
     spot = far_curb(ya, width(ya), into_road_ft=1)

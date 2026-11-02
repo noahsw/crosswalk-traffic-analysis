@@ -1,5 +1,5 @@
 {
-  "note": "P31 stands still at the south curb just east of the crosswalk for about 18 s. V268 passes as they arrive (too close to stop); V269 and V270 drive through about 8 s into the wait. Checked against the crossing clip.",
+  "note": "P31 stands still at the south curb just east of the crosswalk for about 18 s. V268 passes just as they walk up and stop, before they'd shown they meant to cross (not judged); V269 and V270 drive through about 8 s into the wait. Checked against the crossing clip.",
   "crosswalk": [[713.0, 791.0], [810.0, 824.0], [1194.0, 720.0], [1088.0, 716.0]],
   "image_size": [1920, 1080],
   "pedestrians": [
@@ -23,10 +23,6 @@
       }
     },
     "drivers": {
-      "V268": [
-        "too_close_to_stop",
-        "waiting_at_curb"
-      ],
       "V269": [
         "did_not_yield",
         "waiting_at_curb"

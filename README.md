@@ -297,6 +297,10 @@ start trying to cross when they wait at the curb: in the waiting area at that en
 crosswalk (`yielding.waiting_area_px` deep, and a crosswalk's width to each side), or standing
 still up to 6 ft beyond it, at the curb's edge or in the gutter. Walking through there doesn't
 count, so someone walking along the road's edge who turns into the crosswalk hasn't been waiting.
+Drivers are only judged once the pedestrian has shown they mean to cross: by standing about
+there for 3 s (or already standing there when first seen), reaching the end of the crosswalk,
+or stepping in. Until then they may only be walking along the sidewalk, or dawdling at the
+corner, and a car that drives through isn't judged against them.
 
 - **did not yield**: drove through without slowing below 5 mph, in a lane the pedestrian
   still had to cross. While the pedestrian waits at the curb, both lanes count; set

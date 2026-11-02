@@ -1,5 +1,5 @@
 {
-  "note": "Two people cross northbound together: P145 waits about 12 s, P153 steps up later and leaves first. V1292 arrives just as P145 appears; V1293 drives through while both wait (did not yield, against P145, who had waited longer); V1296 stops for them in the crosswalk. Live mode once judged V1293 against P153 alone, as too close to stop. Checked against the crossing clip.",
+  "note": "Two people cross northbound together: P145 waits about 12 s, P153 steps up later and leaves first. V1292 passes as P145 comes to a stop, before she'd shown she meant to cross (not judged); V1293 drives through while both wait (did not yield, against P145, who had waited longer); V1296 stops for them in the crosswalk. Live mode once judged V1293 against P153 alone, as too close to stop. Checked against the crossing clip.",
   "crosswalk": [[713.0, 791.0], [810.0, 824.0], [1194.0, 720.0], [1088.0, 716.0]],
   "image_size": [1920, 1080],
   "pedestrians": [
@@ -33,10 +33,6 @@
       }
     },
     "drivers": {
-      "V1292": [
-        "too_close_to_stop",
-        "waiting_at_curb"
-      ],
       "V1293": [
         "did_not_yield",
         "waiting_at_curb"
